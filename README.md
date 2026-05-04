@@ -21,12 +21,14 @@
   </a>
 </p>
 
-Type `/graphify` in your AI coding assistant and it maps your entire project — code, docs, PDFs, images, videos — into a knowledge graph you can query instead of grepping through files.
+Type `/graphify` in your AI coding assistant, or run `graphify .` in a normal terminal, and it maps your entire project — code, docs, PDFs, images, videos — into a knowledge graph you can query instead of grepping through files.
 
 Works in Claude Code, Codex, OpenCode, Cursor, Gemini CLI, GitHub Copilot CLI, VS Code Copilot Chat, Aider, OpenClaw, Factory Droid, Trae, Hermes, Kiro, Pi, and Google Antigravity.
 
 ```
 /graphify .
+# or from a terminal:
+graphify .
 ```
 
 That's it. You get three files:
@@ -139,22 +141,24 @@ Code is extracted locally with no API calls (AST via tree-sitter). Everything el
 ## Common commands
 
 ```bash
-/graphify .                        # build graph for current folder
-/graphify ./docs --update          # re-extract only changed files
-/graphify . --cluster-only         # rerun clustering without re-extracting
-/graphify . --no-viz               # skip the HTML, just the report + JSON
-/graphify . --wiki                 # build a markdown wiki from the graph
+graphify .                         # build/update graph for current folder
+graphify ./docs --update           # re-extract only changed files
+graphify . --cluster-only          # rerun clustering without re-extracting
+graphify . --no-viz                # skip the HTML, just the report + JSON
+graphify . --wiki                  # build a markdown wiki from the graph
 
-/graphify query "what connects auth to the database?"
-/graphify path "UserService" "DatabasePool"
-/graphify explain "RateLimiter"
+graphify query "what connects auth to the database?"
+graphify path "UserService" "DatabasePool"
+graphify explain "RateLimiter"
 
-/graphify add https://arxiv.org/abs/1706.03762   # fetch a paper and add it
-/graphify add <youtube-url>                       # transcribe and add a video
+graphify add https://arxiv.org/abs/1706.03762   # fetch a paper and add it
+graphify add <youtube-url>                       # transcribe and add a video
 
 graphify hook install              # auto-rebuild on git commit
 graphify merge-graphs a.json b.json              # combine two graphs
 ```
+
+Inside an assistant, use the same shape with `/graphify` (or `$graphify` in Codex): `/graphify .`, `/graphify . --wiki`, `/graphify query "..."`.
 
 See the [full command reference](#full-command-reference) below.
 
@@ -228,31 +232,24 @@ The MCP server gives your assistant structured access: `query_graph`, `get_node`
 
 ## Full command reference
 
+### Terminal CLI
+
 ```
-/graphify                          # run on current directory
-/graphify ./raw                    # run on a specific folder
-/graphify ./raw --mode deep        # more aggressive relationship extraction
-/graphify ./raw --update           # re-extract only changed files
-/graphify ./raw --directed         # preserve edge direction
-/graphify ./raw --cluster-only     # rerun clustering on existing graph
-/graphify ./raw --no-viz           # skip HTML visualization
-/graphify ./raw --obsidian         # generate Obsidian vault
-/graphify ./raw --wiki             # build agent-crawlable markdown wiki
-/graphify ./raw --svg              # export graph.svg
-/graphify ./raw --graphml          # export for Gephi / yEd
-/graphify ./raw --neo4j            # generate cypher.txt for Neo4j
-/graphify ./raw --neo4j-push bolt://localhost:7687
-/graphify ./raw --watch            # auto-sync as files change
-/graphify ./raw --mcp              # start MCP stdio server
+graphify .                         # build/update current directory
+graphify ./raw                     # build/update a specific folder
+graphify ./raw --update            # accepted alias for path-first update
+graphify ./raw --cluster-only      # rerun clustering on existing graph
+graphify ./raw --no-viz            # skip HTML visualization
+graphify ./raw --wiki              # build agent-crawlable markdown wiki
 
-/graphify add https://arxiv.org/abs/1706.03762
-/graphify add <video-url>
-/graphify add https://... --author "Name" --contributor "Name"
+graphify add https://arxiv.org/abs/1706.03762
+graphify add <video-url>
+graphify add https://... --author "Name" --contributor "Name"
 
-/graphify query "what connects attention to the optimizer?"
-/graphify query "..." --dfs --budget 1500
-/graphify path "DigestAuth" "Response"
-/graphify explain "SwinTransformer"
+graphify query "what connects attention to the optimizer?"
+graphify query "..." --dfs --budget 1500
+graphify path "DigestAuth" "Response"
+graphify explain "SwinTransformer"
 
 graphify hook install              # post-commit + post-checkout hooks
 graphify hook uninstall
@@ -279,6 +276,21 @@ graphify watch ./src
 graphify check-update ./src
 graphify update ./src
 graphify cluster-only ./my-project
+```
+
+### Assistant skill
+
+The `/graphify` skill understands the same common path-first shape and can add assistant-mediated options for richer semantic extraction:
+
+```
+/graphify .
+/graphify ./raw --mode deep
+/graphify ./raw --directed
+/graphify ./raw --obsidian
+/graphify ./raw --svg
+/graphify ./raw --graphml
+/graphify ./raw --neo4j
+/graphify ./raw --mcp
 ```
 
 ---

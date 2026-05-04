@@ -11,7 +11,7 @@ Turn any folder of files into a navigable knowledge graph with community detecti
 ## Usage
 
 ```
-/graphify                                             # full pipeline on current directory → Obsidian vault
+/graphify                                             # full pipeline on current directory
 /graphify <path>                                      # full pipeline on specific path
 /graphify https://github.com/<owner>/<repo>           # clone repo then run full pipeline on it
 /graphify https://github.com/<owner>/<repo> --branch <branch>  # clone a specific branch
@@ -39,6 +39,15 @@ Turn any folder of files into a navigable knowledge graph with community detecti
 /graphify query "<question>" --budget 1500            # cap answer at N tokens
 /graphify path "AuthModule" "Database"                # shortest path between two concepts
 /graphify explain "SwinTransformer"                   # plain-language explanation of a node
+```
+
+Terminal equivalent:
+
+```bash
+graphify .                                            # build/update current directory
+graphify <path> --no-viz                              # skip graph.html, keep report + JSON
+graphify <path> --cluster-only                        # rerun clustering on existing graph
+graphify <path> --wiki                                # write graphify-out/wiki/index.md
 ```
 
 ## What graphify is for

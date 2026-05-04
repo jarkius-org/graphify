@@ -1,7 +1,16 @@
 """Tests for graphify/cache.py."""
 import pytest
 from pathlib import Path
-from graphify.cache import file_hash, cache_dir, load_cached, save_cached, cached_files, clear_cache, _body_content
+from graphify.cache import (
+    _CACHE_SCHEMA_VERSION,
+    file_hash,
+    cache_dir,
+    load_cached,
+    save_cached,
+    cached_files,
+    clear_cache,
+    _body_content,
+)
 
 
 @pytest.fixture
@@ -32,6 +41,14 @@ def test_file_hash_changes(tmp_path):
     f1.write_text("content one")
     f2.write_text("content two")
     assert file_hash(f1) != file_hash(f2)
+
+
+def test_file_hash_includes_cache_schema_version(tmp_path, monkeypatch):
+    f = tmp_path / "a.txt"
+    f.write_text("same content")
+    h1 = file_hash(f)
+    monkeypatch.setattr("graphify.cache._CACHE_SCHEMA_VERSION", _CACHE_SCHEMA_VERSION + "-next")
+    assert file_hash(f) != h1
 
 
 def test_cache_roundtrip(tmp_file, cache_root):

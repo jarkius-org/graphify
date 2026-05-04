@@ -1,4 +1,5 @@
 """Tests for watch.py - file watcher helpers (no watchdog required)."""
+import json
 import time
 from pathlib import Path
 import pytest
@@ -78,6 +79,70 @@ def test_check_update_does_not_clear_flag(tmp_path):
     flag.write_text("1")
     check_update(tmp_path)
     assert flag.exists()
+
+
+def test_rebuild_code_drops_stale_code_scoped_nodes(tmp_path):
+    from graphify.watch import _rebuild_code
+
+    (tmp_path / "index.php").write_text("<?php echo 'fresh';\n", encoding="utf-8")
+    out = tmp_path / "graphify-out"
+    out.mkdir()
+    (out / "graph.json").write_text(json.dumps({
+        "directed": False,
+        "multigraph": False,
+        "graph": {},
+        "nodes": [
+            {"id": "index_php", "label": "index.php", "file_type": "code", "source_file": "index.php"},
+            {
+                "id": "page_stale",
+                "label": "page:$stale",
+                "file_type": "code",
+                "source_file": "index.php",
+                "runtime_kind": "web_page",
+            },
+        ],
+        "links": [
+            {
+                "source": "index_php",
+                "target": "page_stale",
+                "relation": "redirects_to",
+                "context": "web_flow",
+                "confidence": "EXTRACTED",
+                "source_file": "index.php",
+                "weight": 1.0,
+            }
+        ],
+    }), encoding="utf-8")
+
+    assert _rebuild_code(tmp_path, force=True) is True
+
+    rebuilt = json.loads((out / "graph.json").read_text(encoding="utf-8"))
+    node_ids = {n["id"] for n in rebuilt["nodes"]}
+    assert "page_stale" not in node_ids
+    assert not any(e.get("target") == "page_stale" for e in rebuilt["links"])
+
+
+def test_rebuild_code_preserves_non_code_source_nodes(tmp_path):
+    from graphify.watch import _rebuild_code
+
+    (tmp_path / "index.php").write_text("<?php echo 'fresh';\n", encoding="utf-8")
+    out = tmp_path / "graphify-out"
+    out.mkdir()
+    (out / "graph.json").write_text(json.dumps({
+        "directed": False,
+        "multigraph": False,
+        "graph": {},
+        "nodes": [
+            {"id": "doc_note", "label": "Note", "file_type": "document", "source_file": "docs/note.md"},
+        ],
+        "links": [],
+    }), encoding="utf-8")
+
+    assert _rebuild_code(tmp_path, force=True) is True
+
+    rebuilt = json.loads((out / "graph.json").read_text(encoding="utf-8"))
+    node_ids = {n["id"] for n in rebuilt["nodes"]}
+    assert "doc_note" in node_ids
 
 
 def test_watch_raises_without_watchdog(tmp_path, monkeypatch):

@@ -591,6 +591,198 @@ def _swift_extra_walk(node, source: bytes, file_nid: str, stem: str, str_path: s
     return False
 
 
+def _extract_legacy_web_flow(source_text: str, path: Path, file_nid: str,
+                             nodes: list, edges: list, seen_ids: set[str]) -> None:
+    """Extract static web navigation from legacy mixed PHP/HTML templates."""
+    import html
+    from urllib.parse import urlsplit
+
+    str_path = str(path)
+    seen_edges: set[tuple[str, str, str]] = {
+        (e["source"], e["target"], e["relation"]) for e in edges
+        if "source" in e and "target" in e and "relation" in e
+    }
+
+    def line_at(pos: int) -> int:
+        return source_text.count("\n", 0, pos) + 1
+
+    def attrs_from(raw: str) -> dict[str, str]:
+        attrs: dict[str, str] = {}
+        for m in re.finditer(r"""([:\w.-]+)\s*=\s*(['"])(.*?)\2""", raw, re.DOTALL):
+            attrs[m.group(1).lower()] = html.unescape(m.group(3).strip())
+        return attrs
+
+    def page_target(raw: str) -> tuple[str, str] | None:
+        target = html.unescape(raw).strip()
+        if not target:
+            return None
+        lower = target.lower()
+        if (lower.startswith("#") or lower.startswith("javascript:")
+                or lower.startswith("mailto:") or lower.startswith("tel:")):
+            return None
+        if ("$" in target or "<?" in target or "?>" in target
+                or "'" in target or '"' in target or " . " in target
+                or "htmlspecialchars(" in lower or "urlencode(" in lower):
+            return None
+        try:
+            parsed = urlsplit(target)
+        except ValueError:
+            return None
+        if parsed.scheme in ("http", "https") and parsed.netloc:
+            return None
+        clean = target.split("#", 1)[0].split("?", 1)[0].strip()
+        if not clean:
+            return None
+        return _make_id("page", clean), f"page:{clean}"
+
+    def add_node(nid: str, label: str, line: int, **attrs) -> None:
+        if nid in seen_ids:
+            return
+        seen_ids.add(nid)
+        node = {
+            "id": nid,
+            "label": label,
+            "file_type": "code",
+            "source_file": str_path,
+            "source_location": f"L{line}",
+        }
+        node.update(attrs)
+        nodes.append(node)
+
+    def add_edge(src: str, tgt: str, relation: str, line: int,
+                 confidence: str = "EXTRACTED", **attrs) -> None:
+        key = (src, tgt, relation)
+        if key in seen_edges:
+            return
+        seen_edges.add(key)
+        edge = {
+            "source": src,
+            "target": tgt,
+            "relation": relation,
+            "context": "web_flow",
+            "confidence": confidence,
+            "confidence_score": 1.0 if confidence == "EXTRACTED" else 0.65,
+            "source_file": str_path,
+            "source_location": f"L{line}",
+            "weight": 1.0,
+        }
+        edge.update(attrs)
+        edges.append(edge)
+
+    def add_page(raw_target: str, line: int) -> tuple[str, str] | None:
+        page = page_target(raw_target)
+        if not page:
+            return None
+        nid, label = page
+        add_node(nid, label, line, runtime_kind="web_page")
+        return nid, label
+
+    def add_dynamic_page(relation: str, line: int, expression: str) -> str:
+        nid = _make_id("page", "dynamic", relation, str(line))
+        add_node(nid, "page:<dynamic>", line, runtime_kind="web_page", expression=expression)
+        return nid
+
+    # Forms and submit controls.
+    form_re = re.compile(r"<form\b(?P<attrs>[^>]*)>(?P<body>.*?)</form\s*>", re.IGNORECASE | re.DOTALL)
+    for m in form_re.finditer(source_text):
+        line = line_at(m.start())
+        attrs = attrs_from(m.group("attrs"))
+        action = attrs.get("action", "")
+        page = add_page(action, line)
+        if not page:
+            continue
+        page_nid, page_label = page
+        method = attrs.get("method", "").lower() or None
+        form_nid = _make_id("form", str(path), action or "self", str(line))
+        add_node(form_nid, f"form:{page_label.removeprefix('page:')}", line,
+                 runtime_kind="web_form", method=method)
+        add_edge(file_nid, form_nid, "contains_form", line, method=method)
+        add_edge(form_nid, page_nid, "submits_to", line, method=method)
+
+        body = m.group("body")
+        for bm in re.finditer(r"<button\b(?P<attrs>[^>]*)>(?P<label>.*?)</button\s*>",
+                              body, re.IGNORECASE | re.DOTALL):
+            btn_attrs = attrs_from(bm.group("attrs"))
+            btn_type = btn_attrs.get("type", "submit").lower()
+            if btn_type != "submit":
+                continue
+            label = re.sub(r"<[^>]+>", " ", bm.group("label"))
+            label = html.unescape(re.sub(r"\s+", " ", label).strip()) or "submit"
+            btn_line = line_at(m.start("body") + bm.start())
+            btn_nid = _make_id("button", str(path), label, str(btn_line))
+            add_node(btn_nid, f"button:{label}", btn_line, runtime_kind="web_control")
+            add_edge(btn_nid, page_nid, "triggers", btn_line, method=method)
+
+        input_re = re.compile(r"<input\b(?P<attrs>[^>]*)>", re.IGNORECASE | re.DOTALL)
+        for im in input_re.finditer(body):
+            input_attrs = attrs_from(im.group("attrs"))
+            if input_attrs.get("type", "").lower() != "submit":
+                continue
+            label = input_attrs.get("value", "").strip() or "submit"
+            input_line = line_at(m.start("body") + im.start())
+            btn_nid = _make_id("button", str(path), label, str(input_line))
+            add_node(btn_nid, f"button:{label}", input_line, runtime_kind="web_control")
+            add_edge(btn_nid, page_nid, "triggers", input_line, method=method)
+
+    # Links.
+    for m in re.finditer(r"<a\b(?P<attrs>[^>]*)>", source_text, re.IGNORECASE | re.DOTALL):
+        attrs = attrs_from(m.group("attrs"))
+        href = attrs.get("href", "")
+        line = line_at(m.start())
+        page = add_page(href, line)
+        if page:
+            add_edge(file_nid, page[0], "links_to", line, element="a")
+
+    # PHP redirects.
+    exact_redirect_spans: list[tuple[int, int]] = []
+    exact_redirect_re = re.compile(
+        r"""header\s*\(\s*(['"])\s*Location\s*:\s*([^'"]+?)\1\s*\)""",
+        re.IGNORECASE | re.DOTALL,
+    )
+    for m in exact_redirect_re.finditer(source_text):
+        line = line_at(m.start())
+        page = add_page(m.group(2), line)
+        if page:
+            exact_redirect_spans.append(m.span())
+            add_edge(file_nid, page[0], "redirects_to", line, expression=m.group(0))
+
+    redirect_re = re.compile(r"header\s*\((?P<expr>[^;]*Location[^;]*)\)", re.IGNORECASE | re.DOTALL)
+    for m in redirect_re.finditer(source_text):
+        if any(start <= m.start() < end for start, end in exact_redirect_spans):
+            continue
+        line = line_at(m.start())
+        target_nid = add_dynamic_page("redirects_to", line, m.group("expr").strip())
+        add_edge(file_nid, target_nid, "redirects_to", line, confidence="INFERRED",
+                 expression=m.group("expr").strip())
+
+    # JavaScript navigation assignments.
+    exact_nav_spans: list[tuple[int, int]] = []
+    exact_nav_re = re.compile(
+        r"""(?:window\.|document\.)?location(?:\.href)?\s*=\s*(['"])([^'"]+)\1""",
+        re.IGNORECASE,
+    )
+    for m in exact_nav_re.finditer(source_text):
+        line = line_at(m.start())
+        page = add_page(m.group(2), line)
+        if page:
+            exact_nav_spans.append(m.span())
+            add_edge(file_nid, page[0], "navigates_to", line, expression=m.group(0))
+
+    nav_re = re.compile(
+        r"""(?:window\.|document\.)?location(?:\.href)?\s*=\s*(?P<expr>[^;\n]+)""",
+        re.IGNORECASE,
+    )
+    for m in nav_re.finditer(source_text):
+        if any(start <= m.start() < end for start, end in exact_nav_spans):
+            continue
+        expr = m.group("expr").strip()
+        if not expr or expr[0] in ("'", '"'):
+            continue
+        line = line_at(m.start())
+        target_nid = add_dynamic_page("navigates_to", line, expr)
+        add_edge(file_nid, target_nid, "navigates_to", line, confidence="INFERRED", expression=expr)
+
+
 # ── Language configs ──────────────────────────────────────────────────────────
 
 _PYTHON_CONFIG = LanguageConfig(
@@ -892,6 +1084,19 @@ def _extract_generic(path: Path, config: LanguageConfig) -> dict:
                 "source_file": str_path,
                 "source_location": f"L{line}",
             })
+
+    def add_runtime_node(nid: str, label: str, line: int, **attrs) -> None:
+        if nid not in seen_ids:
+            seen_ids.add(nid)
+            node = {
+                "id": nid,
+                "label": label,
+                "file_type": "code",
+                "source_file": str_path,
+                "source_location": f"L{line}",
+            }
+            node.update(attrs)
+            nodes.append(node)
 
     def add_edge(src: str, tgt: str, relation: str, line: int,
                  confidence: str = "EXTRACTED", weight: float = 1.0,
@@ -1196,6 +1401,129 @@ def _extract_generic(path: Path, config: LanguageConfig) -> dict:
             walk(child, parent_class_nid=None)
 
     walk(root)
+
+    # ── PHP runtime-signal pass ───────────────────────────────────────────────
+    # Legacy PHP often wires behavior through top-level include/require calls,
+    # define(...) constants, SQL strings, and dynamic class construction. These
+    # are not ordinary imports/calls, but they are the load-bearing edges agents
+    # need before judging unused code or runtime coupling.
+    if config.ts_module == "tree_sitter_php":
+        source_text = source.decode("utf-8", errors="replace")
+        _extract_legacy_web_flow(source_text, path, file_nid, nodes, edges, seen_ids)
+
+        sql_table_re = re.compile(
+            r"\b(?:from|join|update|into)\s+[`\"]?([a-zA-Z_][a-zA-Z0-9_]*)[`\"]?",
+            re.IGNORECASE,
+        )
+        sql_statement_re = re.compile(r"\b(?:select|insert|update|delete)\b", re.IGNORECASE)
+        seen_runtime_edges: set[tuple[str, str, str]] = set()
+
+        def _php_string_text(n) -> str | None:
+            if n.type not in ("string", "encapsed_string"):
+                return None
+            parts: list[str] = []
+            for child in n.children:
+                if child.type == "string_content":
+                    parts.append(_read_text(child, source))
+            return "".join(parts)
+
+        def _php_string_parts(n) -> list[str]:
+            parts: list[str] = []
+            text = _php_string_text(n)
+            if text is not None:
+                parts.append(text)
+            for child in n.children:
+                parts.extend(_php_string_parts(child))
+            return parts
+
+        def _php_first_arg_string(call_node) -> str | None:
+            args = call_node.child_by_field_name("arguments")
+            if not args:
+                return None
+            for arg in args.children:
+                if arg.type != "argument":
+                    continue
+                for child in arg.children:
+                    text = _php_string_text(child)
+                    if text:
+                        return text
+                break
+            return None
+
+        def _emit_runtime_edge(target_nid: str, label: str, relation: str, line: int,
+                               confidence: str = "EXTRACTED", **attrs) -> None:
+            add_runtime_node(target_nid, label, line, **attrs)
+            key = (file_nid, target_nid, relation)
+            if key in seen_runtime_edges:
+                return
+            seen_runtime_edges.add(key)
+            add_edge(file_nid, target_nid, relation, line, confidence=confidence, context="runtime")
+
+        def _walk_php_runtime(n) -> None:
+            line = n.start_point[0] + 1
+
+            if n.type in ("include_expression", "include_once_expression",
+                          "require_expression", "require_once_expression"):
+                raw = _read_text(n, source)
+                parts = [p for p in _php_string_parts(n) if p]
+                if parts:
+                    target = "".join(parts)
+                    dynamic = len(parts) > 1 or any(
+                        child.type in ("name", "variable_name") for child in n.children
+                    )
+                    relation = "includes_dynamic" if dynamic else "includes"
+                    _emit_runtime_edge(
+                        _make_id("include", target),
+                        target,
+                        relation,
+                        line,
+                        confidence="INFERRED" if dynamic else "EXTRACTED",
+                        runtime_kind="php_include",
+                        expression=raw,
+                    )
+
+            if n.type == "function_call_expression":
+                func = n.child_by_field_name("function")
+                callee = _read_text(func, source).lower() if func else ""
+                if callee == "define":
+                    const_name = _php_first_arg_string(n)
+                    if const_name:
+                        _emit_runtime_edge(
+                            _make_id("constant", const_name),
+                            const_name,
+                            "defines_constant",
+                            line,
+                            runtime_kind="php_constant",
+                        )
+
+            if n.type == "object_creation_expression":
+                for child in n.children:
+                    if child.is_named and child.type in ("name", "qualified_name"):
+                        class_name = _read_text(child, source)
+                        _emit_runtime_edge(
+                            _make_id("class", class_name),
+                            class_name,
+                            "instantiates",
+                            line,
+                            runtime_kind="php_class",
+                        )
+                        break
+
+            text = _php_string_text(n)
+            if text and sql_statement_re.search(text):
+                for table in sql_table_re.findall(text):
+                    _emit_runtime_edge(
+                        _make_id("table", table),
+                        f"table:{table}",
+                        "queries_table",
+                        line,
+                        runtime_kind="sql_table",
+                    )
+
+            for child in n.children:
+                _walk_php_runtime(child)
+
+        _walk_php_runtime(root)
 
     # ── Call-graph pass ───────────────────────────────────────────────────────
     label_to_nid: dict[str, str] = {}
@@ -1708,12 +2036,16 @@ def extract_blade(path: Path) -> dict:
     nodes = [{"id": file_nid, "label": path.name, "file_type": "code",
               "source_file": str(path), "source_location": None}]
     edges = []
+    seen_ids = {file_nid}
+
+    _extract_legacy_web_flow(src, path, file_nid, nodes, edges, seen_ids)
 
     # @include('path.to.partial') or @include("path.to.partial")
     for m in re.finditer(r"@include\(['\"]([^'\"]+)['\"]", src):
         tgt = m.group(1).replace(".", "/")
         tgt_nid = _make_id(tgt)
-        if tgt_nid not in {n["id"] for n in nodes}:
+        if tgt_nid not in seen_ids:
+            seen_ids.add(tgt_nid)
             nodes.append({"id": tgt_nid, "label": m.group(1), "file_type": "code",
                           "source_file": str(path), "source_location": None})
         edges.append({"source": file_nid, "target": tgt_nid, "relation": "includes",
@@ -1723,7 +2055,8 @@ def extract_blade(path: Path) -> dict:
     # <livewire:component.name /> or <livewire:component.name>
     for m in re.finditer(r"<livewire:([\w.\-]+)", src):
         tgt_nid = _make_id(m.group(1))
-        if tgt_nid not in {n["id"] for n in nodes}:
+        if tgt_nid not in seen_ids:
+            seen_ids.add(tgt_nid)
             nodes.append({"id": tgt_nid, "label": m.group(1), "file_type": "code",
                           "source_file": str(path), "source_location": None})
         edges.append({"source": file_nid, "target": tgt_nid, "relation": "uses_component",
@@ -1733,7 +2066,8 @@ def extract_blade(path: Path) -> dict:
     # wire:click="methodName"
     for m in re.finditer(r'wire:click=["\']([^"\']+)["\']', src):
         tgt_nid = _make_id(m.group(1))
-        if tgt_nid not in {n["id"] for n in nodes}:
+        if tgt_nid not in seen_ids:
+            seen_ids.add(tgt_nid)
             nodes.append({"id": tgt_nid, "label": m.group(1), "file_type": "code",
                           "source_file": str(path), "source_location": None})
         edges.append({"source": file_nid, "target": tgt_nid, "relation": "binds_method",

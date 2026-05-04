@@ -1042,6 +1042,145 @@ def _clone_repo(url: str, branch: str | None = None, out_dir: Path | None = None
     return dest
 
 
+_COMMANDS = {
+    "install", "claude", "gemini", "cursor", "vscode", "copilot", "kiro", "pi",
+    "aider", "codex", "opencode", "claw", "droid", "trae", "trae-cn", "hermes",
+    "antigravity", "hook", "query", "save-result", "path", "explain", "add",
+    "watch", "cluster-only", "update", "hook-check", "check-update", "tree",
+    "merge-graphs", "clone", "benchmark",
+}
+
+
+def _parse_min_community_size(args: list[str]) -> int:
+    min_cs_arg = next((a for a in args if a.startswith("--min-community-size=")), None)
+    return int(min_cs_arg.split("=", 1)[1]) if min_cs_arg else 3
+
+
+def _write_wiki(watch_path: Path) -> None:
+    graph_json = watch_path / _GRAPHIFY_OUT / "graph.json"
+    if not graph_json.exists():
+        print(f"error: no graph found at {graph_json} — run graphify {watch_path} first", file=sys.stderr)
+        sys.exit(1)
+
+    from graphify.build import build_from_json
+    from graphify.cluster import cluster, score_all
+    from graphify.analyze import god_nodes
+    from graphify.wiki import to_wiki
+
+    raw = json.loads(graph_json.read_text(encoding="utf-8"))
+    G = build_from_json(raw, directed=bool(raw.get("directed", False)))
+    communities = cluster(G)
+    cohesion = score_all(G, communities)
+    gods = god_nodes(G)
+    labels = {cid: f"Community {cid}" for cid in communities}
+    wiki_dir = watch_path / _GRAPHIFY_OUT / "wiki"
+    article_count = to_wiki(
+        G,
+        communities,
+        wiki_dir,
+        community_labels=labels or None,
+        cohesion=cohesion,
+        god_nodes_data=gods,
+    )
+    print(f"Wiki: {article_count} articles written to {wiki_dir}")
+    print(f"  {wiki_dir / 'index.md'}  ->  agent entry point")
+
+
+def _run_update(watch_path: Path, *, force: bool = False,
+                no_viz: bool = False, wiki: bool = False) -> None:
+    if not watch_path.exists():
+        print(f"error: path not found: {watch_path}", file=sys.stderr)
+        sys.exit(1)
+    from graphify.watch import _rebuild_code
+    print(f"Re-extracting code files in {watch_path} (no LLM needed)...")
+    ok = _rebuild_code(watch_path, force=force, no_viz=no_viz)
+    if not ok:
+        print("Nothing to update or rebuild failed — check output above.", file=sys.stderr)
+        sys.exit(1)
+    print("Code graph updated. For doc/paper/image changes run /graphify --update in your AI assistant.")
+    if wiki:
+        _write_wiki(watch_path)
+    if not os.environ.get("MOONSHOT_API_KEY") and not os.environ.get("GRAPHIFY_NO_TIPS"):
+        print("Tip: set MOONSHOT_API_KEY to use Kimi K2.6 for semantic extraction — 3x cheaper, richer graphs. pip install 'graphifyy[kimi]'")
+
+
+def _run_cluster_only(watch_path: Path, *, no_viz: bool = False,
+                      min_community_size: int = 3) -> None:
+    graph_json = watch_path / _GRAPHIFY_OUT / "graph.json"
+    if not graph_json.exists():
+        print(f"error: no graph found at {graph_json} — run /graphify first", file=sys.stderr)
+        sys.exit(1)
+    from graphify.build import build_from_json
+    from graphify.cluster import cluster, score_all
+    from graphify.analyze import god_nodes, surprising_connections, suggest_questions
+    from graphify.report import generate
+    from graphify.export import to_json, to_html
+
+    print("Loading existing graph...")
+    raw = json.loads(graph_json.read_text(encoding="utf-8"))
+    G = build_from_json(raw, directed=bool(raw.get("directed", False)))
+    print(f"Graph: {G.number_of_nodes()} nodes, {G.number_of_edges()} edges")
+    print("Re-clustering...")
+    communities = cluster(G)
+    cohesion = score_all(G, communities)
+    gods = god_nodes(G)
+    surprises = surprising_connections(G, communities)
+    labels = {cid: f"Community {cid}" for cid in communities}
+    questions = suggest_questions(G, communities, labels)
+    report = generate(
+        G,
+        communities,
+        cohesion,
+        labels,
+        gods,
+        surprises,
+        {"warning": "cluster-only mode — file stats not available"},
+        {"input": 0, "output": 0},
+        str(watch_path),
+        suggested_questions=questions,
+        min_community_size=min_community_size,
+    )
+    out = watch_path / _GRAPHIFY_OUT
+    (out / "GRAPH_REPORT.md").write_text(report, encoding="utf-8")
+    to_json(G, communities, str(out / "graph.json"))
+
+    html_target = out / "graph.html"
+    if no_viz:
+        if html_target.exists():
+            html_target.unlink()
+        print(f"Done — {len(communities)} communities. GRAPH_REPORT.md and graph.json updated (--no-viz; graph.html removed).")
+    else:
+        try:
+            to_html(G, communities, str(html_target), community_labels=labels or None)
+            print(f"Done — {len(communities)} communities. GRAPH_REPORT.md, graph.json and graph.html updated.")
+        except ValueError as viz_err:
+            if html_target.exists():
+                html_target.unlink()
+            print(f"Skipped graph.html: {viz_err}")
+            print(f"Done — {len(communities)} communities. GRAPH_REPORT.md and graph.json updated.")
+
+
+def _run_path_first(argv: list[str]) -> None:
+    watch_path = Path(argv[1])
+    args = argv[2:]
+    no_viz = "--no-viz" in args
+    wiki = "--wiki" in args
+    force = (
+        "--force" in args
+        or os.environ.get("GRAPHIFY_FORCE", "").lower() in ("1", "true", "yes")
+    )
+    if "--cluster-only" in args:
+        _run_cluster_only(
+            watch_path,
+            no_viz=no_viz,
+            min_community_size=_parse_min_community_size(args),
+        )
+        if wiki:
+            _write_wiki(watch_path)
+        return
+    _run_update(watch_path, force=force, no_viz=no_viz, wiki=wiki)
+
+
 def main() -> None:
     # Check all known skill install locations for a stale version stamp.
     # Skip during install/uninstall (hook writes trigger a fresh check anyway).
@@ -1054,6 +1193,10 @@ def main() -> None:
         print("Usage: graphify <command>")
         print()
         print("Commands:")
+        print("  <path> [--update]       build/update graph for a folder (e.g. graphify .)")
+        print("    --cluster-only         rerun clustering without re-extracting")
+        print("    --no-viz               skip graph.html generation")
+        print("    --wiki                 build graphify-out/wiki/index.md")
         print("  install [--platform P]  copy skill to platform config dir (claude|windows|codex|opencode|aider|claw|droid|trae|trae-cn|gemini|cursor|antigravity|hermes|kiro|pi)")
         print("  path \"A\" \"B\"            shortest path between two nodes in graph.json")
         print("    --graph <path>          path to graph.json (default graphify-out/graph.json)")
@@ -1071,6 +1214,8 @@ def main() -> None:
         print("  watch <path>            watch a folder and rebuild the graph on code changes")
         print("  update <path>           re-extract code files and update the graph (no LLM needed)")
         print("    --force                 overwrite graph.json even if the rebuild has fewer nodes")
+        print("    --no-viz                skip graph.html generation")
+        print("    --wiki                  build graphify-out/wiki/index.md after update")
         print("                            (also: GRAPHIFY_FORCE=1 env var; use after refactors that delete code)")
         print("  cluster-only <path>     rerun clustering on an existing graph.json and regenerate report")
         print("    --no-viz                skip graph.html generation (useful for >5000 node graphs / CI)")
@@ -1133,6 +1278,10 @@ def main() -> None:
         return
 
     cmd = sys.argv[1]
+    if cmd not in _COMMANDS and Path(cmd).exists():
+        _run_path_first(sys.argv)
+        return
+
     if cmd == "install":
         # Default to windows platform on Windows, claude elsewhere
         default_platform = "windows" if platform.system() == "Windows" else "claude"
@@ -1545,10 +1694,13 @@ def main() -> None:
 
     elif cmd == "update":
         force = os.environ.get("GRAPHIFY_FORCE", "").lower() in ("1", "true", "yes")
+        no_viz = "--no-viz" in sys.argv[2:]
+        wiki = "--wiki" in sys.argv[2:]
         argv = list(sys.argv)
-        if "--force" in argv[2:]:
-            force = True
-            argv = [a for a in argv if a != "--force"]
+        for flag in ("--force", "--no-viz", "--wiki"):
+            if flag == "--force" and flag in argv[2:]:
+                force = True
+            argv = [a for a in argv if a != flag]
         if len(argv) > 2:
             watch_path = Path(argv[2])
         else:
@@ -1558,19 +1710,7 @@ def main() -> None:
                 watch_path = Path(saved.read_text(encoding="utf-8").strip())
             else:
                 watch_path = Path(".")
-        if not watch_path.exists():
-            print(f"error: path not found: {watch_path}", file=sys.stderr)
-            sys.exit(1)
-        from graphify.watch import _rebuild_code
-        print(f"Re-extracting code files in {watch_path} (no LLM needed)...")
-        ok = _rebuild_code(watch_path, force=force)
-        if ok:
-            print("Code graph updated. For doc/paper/image changes run /graphify --update in your AI assistant.")
-            if not os.environ.get("MOONSHOT_API_KEY") and not os.environ.get("GRAPHIFY_NO_TIPS"):
-                print("Tip: set MOONSHOT_API_KEY to use Kimi K2.6 for semantic extraction — 3x cheaper, richer graphs. pip install 'graphifyy[kimi]'")
-        else:
-            print("Nothing to update or rebuild failed — check output above.", file=sys.stderr)
-            sys.exit(1)
+        _run_update(watch_path, force=force, no_viz=no_viz, wiki=wiki)
 
     elif cmd == "hook-check":
         # Codex Desktop rejects hookSpecificOutput.additionalContext on PreToolUse.

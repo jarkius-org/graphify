@@ -5,7 +5,7 @@ import pytest
 from graphify.extract import (
     extract_java, extract_c, extract_cpp, extract_ruby,
     extract_csharp, extract_kotlin, extract_scala, extract_php,
-    extract_swift, extract_go, extract_julia, extract_js,
+    extract_swift, extract_go, extract_julia, extract_js, extract_blade,
 )
 
 FIXTURES = Path(__file__).parent / "fixtures"
@@ -396,6 +396,117 @@ def test_php_event_listener_links_event_to_listener():
         for e in r["edges"] if e["relation"] == "listened_by"
     ]
     assert any("UserRegistered" in src and "SendWelcomeEmail" in tgt for src, tgt in listened)
+
+def test_php_runtime_finds_require_and_include_edges():
+    r = extract_php(FIXTURES / "sample_php_runtime.php")
+    node_by_id = {n["id"]: n["label"] for n in r["nodes"]}
+    included = [
+        node_by_id.get(e["target"], e["target"])
+        for e in r["edges"] if e["relation"] in ("includes", "includes_dynamic")
+    ]
+    assert any("vendor/autoload.php" in label for label in included)
+    assert "TIS_login.php" in included
+
+def test_php_runtime_finds_defined_config_constant():
+    r = extract_php(FIXTURES / "sample_php_runtime.php")
+    node_by_id = {n["id"]: n["label"] for n in r["nodes"]}
+    constants = [
+        node_by_id.get(e["target"], e["target"])
+        for e in r["edges"] if e["relation"] == "defines_constant"
+    ]
+    assert "CONFIG_IncludeDir" in constants
+
+def test_php_runtime_finds_object_instantiation():
+    r = extract_php(FIXTURES / "sample_php_runtime.php")
+    node_by_id = {n["id"]: n["label"] for n in r["nodes"]}
+    instantiates = [
+        node_by_id.get(e["target"], e["target"])
+        for e in r["edges"] if e["relation"] == "instantiates"
+    ]
+    assert "DBschema" in instantiates
+
+def test_php_runtime_finds_sql_table_usage():
+    r = extract_php(FIXTURES / "sample_php_runtime.php")
+    node_by_id = {n["id"]: n["label"] for n in r["nodes"]}
+    tables = [
+        node_by_id.get(e["target"], e["target"])
+        for e in r["edges"] if e["relation"] == "queries_table"
+    ]
+    assert "table:tis_users" in tables
+    assert "table:tis_assets" in tables
+
+def test_php_web_flow_finds_form_submission():
+    r = extract_php(FIXTURES / "sample_php_web_flow.php")
+    node_by_id = {n["id"]: n["label"] for n in r["nodes"]}
+    submits = [
+        node_by_id.get(e["target"], e["target"])
+        for e in r["edges"] if e["relation"] == "submits_to"
+    ]
+    assert "page:save_asset.php" in submits
+
+def test_php_web_flow_finds_submit_controls():
+    r = extract_php(FIXTURES / "sample_php_web_flow.php")
+    node_by_id = {n["id"]: n["label"] for n in r["nodes"]}
+    triggers = [
+        (node_by_id.get(e["source"], e["source"]), node_by_id.get(e["target"], e["target"]))
+        for e in r["edges"] if e["relation"] == "triggers"
+    ]
+    assert any(src == "button:Save Asset" and tgt == "page:save_asset.php" for src, tgt in triggers)
+    assert any(src == "button:Print Form" and tgt == "page:save_asset.php" for src, tgt in triggers)
+
+def test_php_web_flow_finds_anchor_links():
+    r = extract_php(FIXTURES / "sample_php_web_flow.php")
+    node_by_id = {n["id"]: n["label"] for n in r["nodes"]}
+    links = [
+        node_by_id.get(e["target"], e["target"])
+        for e in r["edges"] if e["relation"] == "links_to"
+    ]
+    assert "page:asset_detail.php" in links
+    assert "page:#" not in links
+    assert not any("mailto" in target for target in links)
+    assert not any("datarow" in target for target in links)
+    assert not any("[bad" in target for target in links)
+    assert not any("htmlspecialchars" in target for target in links)
+    assert not any(target.startswith("page:' .") for target in links)
+
+def test_php_web_flow_finds_redirects():
+    r = extract_php(FIXTURES / "sample_php_web_flow.php")
+    node_by_id = {n["id"]: n["label"] for n in r["nodes"]}
+    redirects = [
+        (node_by_id.get(e["target"], e["target"]), e["confidence"])
+        for e in r["edges"] if e["relation"] == "redirects_to"
+    ]
+    assert ("page:asset_list.php", "EXTRACTED") in redirects
+    assert any(target == "page:<dynamic>" and confidence == "INFERRED" for target, confidence in redirects)
+    assert not any(target.startswith("page:$") for target, _ in redirects)
+
+def test_php_web_flow_marks_interpolated_redirects_dynamic():
+    r = extract_php(FIXTURES / "sample_php_web_flow.php")
+    node_by_id = {n["id"]: n["label"] for n in r["nodes"]}
+    dynamic_redirects = [
+        e for e in r["edges"]
+        if e["relation"] == "redirects_to"
+        and node_by_id.get(e["target"], e["target"]) == "page:<dynamic>"
+    ]
+    assert any("$base/asset.php" in e.get("expression", "") for e in dynamic_redirects)
+
+def test_php_web_flow_finds_javascript_navigation():
+    r = extract_php(FIXTURES / "sample_php_web_flow.php")
+    node_by_id = {n["id"]: n["label"] for n in r["nodes"]}
+    navigates = [
+        (node_by_id.get(e["target"], e["target"]), e["confidence"])
+        for e in r["edges"] if e["relation"] == "navigates_to"
+    ]
+    assert ("page:asset_print.php", "EXTRACTED") in navigates
+    assert ("page:logout.php", "EXTRACTED") in navigates
+    assert any(target == "page:<dynamic>" and confidence == "INFERRED" for target, confidence in navigates)
+
+def test_blade_web_flow_keeps_existing_and_navigation_edges():
+    r = extract_blade(FIXTURES / "sample_blade_web_flow.blade.php")
+    assert "includes" in _relations(r)
+    assert "uses_component" in _relations(r)
+    assert "submits_to" in _relations(r)
+    assert "links_to" in _relations(r)
 
 
 # ── Swift ────────────────────────────────────────────────────────────────────

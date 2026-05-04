@@ -36,7 +36,8 @@ def _relativize_source_files(payload: dict, root: Path) -> None:
                 continue
 
 
-def _rebuild_code(watch_path: Path, *, follow_symlinks: bool = False, force: bool = False) -> bool:
+def _rebuild_code(watch_path: Path, *, follow_symlinks: bool = False,
+                  force: bool = False, no_viz: bool = False) -> bool:
     """Re-run AST extraction + build + cluster + report for code files. No LLM needed.
 
     When ``force`` is True the node-count safety check in ``to_json`` is bypassed
@@ -77,11 +78,32 @@ def _rebuild_code(watch_path: Path, *, follow_symlinks: bool = False, force: boo
             try:
                 existing = json.loads(existing_graph.read_text(encoding="utf-8"))
                 new_ast_ids = {n["id"] for n in result["nodes"]}
-                preserved_nodes = [n for n in existing.get("nodes", []) if n["id"] not in new_ast_ids]
+
+                def _source_key(value) -> str | None:
+                    if not value:
+                        return None
+                    p = Path(str(value))
+                    if p.is_absolute():
+                        try:
+                            return p.resolve().relative_to(project_root).as_posix()
+                        except ValueError:
+                            return p.resolve().as_posix()
+                    return p.as_posix()
+
+                code_source_keys = {_source_key(f) for f in code_files}
+
+                def _owned_by_current_code(item: dict) -> bool:
+                    return _source_key(item.get("source_file")) in code_source_keys
+
+                preserved_nodes = [
+                    n for n in existing.get("nodes", [])
+                    if n["id"] not in new_ast_ids and not _owned_by_current_code(n)
+                ]
                 all_ids = new_ast_ids | {n["id"] for n in preserved_nodes}
                 preserved_edges = [
                     e for e in existing.get("links", existing.get("edges", []))
                     if e.get("source") in all_ids and e.get("target") in all_ids
+                    and not _owned_by_current_code(e)
                 ]
                 result = {
                     "nodes": result["nodes"] + preserved_nodes,
@@ -126,17 +148,22 @@ def _rebuild_code(watch_path: Path, *, follow_symlinks: bool = False, force: boo
                           {"input": 0, "output": 0}, report_root, suggested_questions=questions)
         (out / "GRAPH_REPORT.md").write_text(report, encoding="utf-8")
 
-        # to_html raises ValueError for graphs > MAX_NODES_FOR_VIZ (5000).
-        # Wrap so core outputs (graph.json + GRAPH_REPORT.md) always land.
         html_written = False
-        try:
-            to_html(G, communities, str(out / "graph.html"), community_labels=labels or None)
-            html_written = True
-        except ValueError as viz_err:
-            print(f"[graphify watch] Skipped graph.html: {viz_err}")
-            stale = out / "graph.html"
+        stale = out / "graph.html"
+        if no_viz:
             if stale.exists():
                 stale.unlink()
+            print("[graphify watch] Skipped graph.html (--no-viz).")
+        else:
+            # to_html raises ValueError for graphs > MAX_NODES_FOR_VIZ (5000).
+            # Wrap so core outputs (graph.json + GRAPH_REPORT.md) always land.
+            try:
+                to_html(G, communities, str(stale), community_labels=labels or None)
+                html_written = True
+            except ValueError as viz_err:
+                print(f"[graphify watch] Skipped graph.html: {viz_err}")
+                if stale.exists():
+                    stale.unlink()
 
         # clear stale needs_update flag if present
         flag = out / "needs_update"

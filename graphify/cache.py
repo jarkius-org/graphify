@@ -11,6 +11,7 @@ from pathlib import Path
 # shared-output setups. Accepts a relative name ("graphify-out-feature") or an
 # absolute path ("/shared/graphify-out").
 _GRAPHIFY_OUT = os.environ.get("GRAPHIFY_OUT", "graphify-out")
+_CACHE_SCHEMA_VERSION = "graphify-cache-v2"
 
 
 def _body_content(content: bytes) -> bytes:
@@ -51,6 +52,8 @@ def file_hash(path: Path, root: Path = Path(".")) -> str:
     raw = p.read_bytes()
     content = _body_content(raw) if p.suffix.lower() == ".md" else raw
     h = hashlib.sha256()
+    h.update(_CACHE_SCHEMA_VERSION.encode())
+    h.update(b"\x00")
     h.update(content)
     h.update(b"\x00")
     try:

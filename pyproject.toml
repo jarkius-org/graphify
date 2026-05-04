@@ -37,9 +37,10 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/safishamsi/graphify"
-Repository = "https://github.com/safishamsi/graphify"
-Issues = "https://github.com/safishamsi/graphify/issues"
+Homepage = "https://github.com/jarkius-org/graphify"
+Repository = "https://github.com/jarkius-org/graphify"
+Issues = "https://github.com/jarkius-org/graphify/issues"
+Upstream = "https://github.com/safishamsi/graphify"
 
 [project.optional-dependencies]
 mcp = ["mcp"]

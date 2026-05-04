@@ -23,6 +23,8 @@
 
 Type `/graphify` in your AI coding assistant, or run `graphify .` in a normal terminal, and it maps your entire project — code, docs, PDFs, images, videos — into a knowledge graph you can query instead of grepping through files.
 
+> **Maintained fork:** This repository is a maintained fork of [`safishamsi/graphify`](https://github.com/safishamsi/graphify), with local changes focused on terminal-first Graphify usage. Original copyright and MIT license attribution are preserved in [`LICENSE`](LICENSE).
+
 Works in Claude Code, Codex, OpenCode, Cursor, Gemini CLI, GitHub Copilot CLI, VS Code Copilot Chat, Aider, OpenClaw, Factory Droid, Trae, Hermes, Kiro, Pi, and Google Antigravity.
 
 ```

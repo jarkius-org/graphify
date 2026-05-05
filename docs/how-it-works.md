@@ -10,8 +10,17 @@ Tree-sitter parses your code files and extracts classes, functions, imports, cal
 **Pass 2 — Video and audio (local, no API calls)**
 Video and audio files are transcribed with faster-whisper. To focus the transcript on your domain, the transcription prompt is seeded with your top god nodes (the most-connected concepts in your code graph so far). Transcripts are cached — re-runs skip already-processed files.
 
-**Pass 3 — Docs, papers, images (Claude subagents, costs tokens)**
-Claude runs in parallel over markdown, PDFs, images, and transcripts. Each subagent reads a batch of files and outputs a JSON fragment: nodes, edges, and any group relationships. The fragments are merged into a single graph.
+**Pass 3 — Docs, papers, images (assistant workers or direct backend, costs tokens)**
+Assistant `/graphify` runs semantic workers over markdown, PDFs, images, and transcripts. The terminal CLI can also call providers directly with `graphify . --backend kimi|claude` or `graphify update . --backend kimi|claude`. Each worker/backend outputs a JSON fragment: nodes, edges, and any group relationships. The fragments are normalized, validated, and merged into a single graph.
+
+Backend setup:
+
+| Backend | Install extra | Required key |
+|---------|---------------|--------------|
+| Kimi / OpenAI-compatible | `pip install "graphifyy[kimi]"` or `graphifyy[llm]` | `MOONSHOT_API_KEY` |
+| Claude direct | `pip install "graphifyy[claude]"` or `graphifyy[llm]` | `ANTHROPIC_API_KEY` |
+
+Code-only corpora stay on the AST-only path even if `--backend` is present, so they do not require an API key.
 
 ---
 
@@ -69,6 +78,8 @@ Code files are extracted in parallel using `ProcessPoolExecutor` — bypasses Py
 ## SHA256 cache
 
 Every extracted file is fingerprinted by content hash. Re-runs skip unchanged files entirely — only new or modified files go through extraction again. The cache lives in `graphify-out/cache/`.
+
+Semantic output from direct backends is checked before merge: relation aliases such as `invoke` are normalized, file type aliases such as `doc` become `document`, dangling semantic edges are dropped with warnings, and confidence labels/scores are preserved.
 
 ---
 

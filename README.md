@@ -144,6 +144,8 @@ Code is extracted locally with no API calls (AST via tree-sitter). Everything el
 
 ```bash
 graphify .                         # build/update graph for current folder
+graphify . --backend kimi          # include direct LLM extraction for docs/papers/images
+graphify update . --backend claude # refresh semantic files from a normal terminal
 graphify ./docs --update           # re-extract only changed files
 graphify . --cluster-only          # rerun clustering without re-extracting
 graphify . --no-viz                # skip the HTML, just the report + JSON
@@ -152,6 +154,8 @@ graphify . --wiki                  # build a markdown wiki from the graph
 graphify query "what connects auth to the database?"
 graphify path "UserService" "DatabasePool"
 graphify explain "RateLimiter"
+graphify tour                      # print a Start here tour through the graph
+graphify diff --files app/api.py   # show changed-file impact from the graph
 
 graphify add https://arxiv.org/abs/1706.03762   # fetch a paper and add it
 graphify add <youtube-url>                       # transcribe and add a video
@@ -163,6 +167,21 @@ graphify merge-graphs a.json b.json              # combine two graphs
 Inside an assistant, use the same shape with `/graphify` (or `$graphify` in Codex): `/graphify .`, `/graphify . --wiki`, `/graphify query "..."`.
 
 See the [full command reference](#full-command-reference) below.
+
+### Direct LLM backends from a terminal
+
+Code-only graphs use local AST extraction and do not need an API key. For docs, papers, and images from a normal terminal, install a backend extra and set the matching key:
+
+```bash
+pip install "graphifyy[llm]"
+export MOONSHOT_API_KEY=...      # for --backend kimi
+export ANTHROPIC_API_KEY=...     # for --backend claude
+
+graphify . --backend kimi --no-viz
+graphify update . --backend claude
+```
+
+Use assistant-mediated `/graphify` when you want your coding assistant to dispatch its own semantic extraction workers. Use `--backend kimi|claude` when you want the terminal CLI to call the provider directly. Graphify validates and normalizes semantic output before merging it into `graph.json`.
 
 ---
 

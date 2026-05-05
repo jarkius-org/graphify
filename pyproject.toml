@@ -52,8 +52,10 @@ leiden = ["graspologic; python_version < '3.13'"]
 office = ["python-docx", "openpyxl"]
 video = ["faster-whisper", "yt-dlp"]
 kimi = ["openai", "tiktoken"]
+claude = ["anthropic", "tiktoken"]
+llm = ["openai", "anthropic", "tiktoken"]
 sql = ["tree-sitter-sql"]
-all = ["mcp", "neo4j", "pypdf", "markdownify", "watchdog", "graspologic; python_version < '3.13'", "python-docx", "openpyxl", "faster-whisper", "yt-dlp", "matplotlib", "openai", "tiktoken", "tree-sitter-sql"]
+all = ["mcp", "neo4j", "pypdf", "markdownify", "watchdog", "graspologic; python_version < '3.13'", "python-docx", "openpyxl", "faster-whisper", "yt-dlp", "matplotlib", "openai", "anthropic", "tiktoken", "tree-sitter-sql"]
 
 [project.scripts]
 graphify = "graphify.__main__:main"

@@ -100,6 +100,29 @@ def test_run_benchmark_includes_node_edge_counts(tmp_path):
     assert result["nodes"] == G.number_of_nodes()
     assert result["edges"] == G.number_of_edges()
 
+def test_run_benchmark_reports_recall_noise_and_missed_connected_nodes(tmp_path):
+    G = _make_graph()
+    G.add_node("n6", label="authentication_fixture", source_file="tests/fixtures/auth.py", source_location="L1", community=3)
+    G.add_edge("n1", "n6", relation="fixture", confidence="EXTRACTED")
+    graph_file = tmp_path / "graph.json"
+    _write_graph(G, graph_file)
+
+    result = run_benchmark(
+        str(graph_file),
+        corpus_words=5_000,
+        questions=["how does authentication work"],
+        expected_nodes={"how does authentication work": ["n1", "n2", "n5", "missing_node"]},
+        noisy_source_prefixes=["tests/fixtures"],
+        depth=1,
+    )
+
+    case = result["per_question"][0]
+    assert case["expected_recall"] == pytest.approx(0.5)
+    assert case["missed_expected_nodes"] == ["n5", "missing_node"]
+    assert case["missed_connected_nodes"] == ["n5"]
+    assert case["noisy_node_rate"] > 0
+    assert case["noisy_nodes"] == ["n6"]
+
 
 # --- print_benchmark ---
 

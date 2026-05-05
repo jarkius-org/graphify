@@ -11,6 +11,7 @@ import time
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
+from graphify.semantic_validate import validate_semantic_graph
 
 # `_read_files` truncates each file at this many characters before joining into
 # the user message. Token estimates use the same cap so packing matches reality.
@@ -450,9 +451,12 @@ def extract_corpus_parallel(
 
 def _merge_into(merged: dict, result: dict) -> None:
     """Append a chunk result into the running merged accumulator."""
+    result = validate_semantic_graph(result)
+    merged.setdefault("warnings", [])
     merged["nodes"].extend(result.get("nodes", []))
     merged["edges"].extend(result.get("edges", []))
     merged["hyperedges"].extend(result.get("hyperedges", []))
+    merged["warnings"].extend(result.get("warnings", []))
     merged["input_tokens"] += result.get("input_tokens", 0)
     merged["output_tokens"] += result.get("output_tokens", 0)
 

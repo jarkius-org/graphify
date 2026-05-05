@@ -46,18 +46,89 @@ def _strip_diacritics(text: str) -> str:
 
 
 _EXACT_MATCH_BONUS = 100.0
+_GENERIC_LABELS = {
+    "main", "client", "response", "request", "result", "data", "config",
+    "handler", "str", "int", "bool", "string", "object",
+}
+_NOISY_SOURCE_PARTS = (
+    "tests/fixtures/",
+    "/fixtures/",
+    "worked/",
+    "examples/",
+    "sample/",
+)
 
 
-def _score_nodes(G: nx.Graph, terms: list[str]) -> list[tuple[float, str]]:
+def _node_type(data: dict) -> str:
+    for key in ("kind", "type", "node_type", "category"):
+        value = data.get(key)
+        if value:
+            return _strip_diacritics(str(value)).lower()
+    return ""
+
+
+def _source_category(source_file: str) -> str:
+    source = source_file.replace("\\", "/").lstrip("./").lower()
+    if source.startswith("tests/") or "/tests/" in source:
+        return "test"
+    if any(part in source for part in _NOISY_SOURCE_PARTS):
+        return "fixture"
+    if source.startswith("docs/") or source.endswith((".md", ".rst", ".txt")):
+        return "docs"
+    return "code"
+
+
+def _metadata_text(data: dict) -> str:
+    chunks: list[str] = []
+    for key in ("summary", "rationale", "language_notes", "description", "docstring"):
+        value = data.get(key)
+        if value:
+            chunks.append(str(value))
+    tags = data.get("tags")
+    if isinstance(tags, (list, tuple, set)):
+        chunks.extend(str(tag) for tag in tags)
+    elif tags:
+        chunks.append(str(tags))
+    return _strip_diacritics(" ".join(chunks)).lower()
+
+
+def _score_nodes(
+    G: nx.Graph,
+    terms: list[str],
+    *,
+    node_types: list[str] | None = None,
+    source_categories: list[str] | None = None,
+) -> list[tuple[float, str]]:
     scored = []
     norm_terms = [_strip_diacritics(t).lower() for t in terms]
+    type_filter = {_strip_diacritics(t).lower() for t in (node_types or [])}
+    category_filter = {_strip_diacritics(c).lower() for c in (source_categories or [])}
     for nid, data in G.nodes(data=True):
+        if type_filter and _node_type(data) not in type_filter:
+            continue
         norm_label = data.get("norm_label") or _strip_diacritics(data.get("label") or "").lower()
         source = (data.get("source_file") or "").lower()
-        score = sum(1 for t in norm_terms if t in norm_label) + sum(0.5 for t in norm_terms if t in source)
-        # Exact match: single term equals the full label (strip trailing () for functions)
-        if any(t == norm_label or t == norm_label.rstrip("()") for t in norm_terms):
+        source_category = _source_category(source)
+        if category_filter and source_category not in category_filter:
+            continue
+        metadata = _metadata_text(data)
+        score = (
+            sum(1.0 for t in norm_terms if t in norm_label)
+            + sum(0.5 for t in norm_terms if t in source)
+            + sum(0.75 for t in norm_terms if t in metadata)
+        )
+        label_base = norm_label.rstrip("()").split(".")[-1]
+        exact_match = any(t == norm_label or t == label_base for t in norm_terms)
+        if exact_match and (label_base not in _GENERIC_LABELS or norm_terms == [label_base]):
             score += _EXACT_MATCH_BONUS
+        if label_base in _GENERIC_LABELS and not any(t == label_base for t in norm_terms):
+            score -= 2.0
+        elif label_base in _GENERIC_LABELS and norm_terms != [label_base]:
+            score -= 1.0
+        if source_category == "fixture":
+            score -= 8.0
+        elif source_category == "test":
+            score -= 2.0
         if score > 0:
             scored.append((score, nid))
     return sorted(scored, reverse=True)
@@ -215,7 +286,7 @@ def _query_graph_text(
         header_parts.append(f"Context: {', '.join(resolved_filters)} ({filter_source})")
     header_parts.append(f"{len(nodes)} nodes found")
     header = " | ".join(header_parts) + "\n\n"
-    return header + _subgraph_to_text(traversal_graph, nodes, edges, token_budget)
+    return header + _subgraph_to_text(traversal_graph, nodes, edges, token_budget, seeds=start_nodes)
 
 
 def _find_node(G: nx.Graph, label: str) -> list[str]:

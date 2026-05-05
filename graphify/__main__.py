@@ -1047,7 +1047,7 @@ _COMMANDS = {
     "aider", "codex", "opencode", "claw", "droid", "trae", "trae-cn", "hermes",
     "antigravity", "hook", "query", "save-result", "path", "explain", "add",
     "watch", "cluster-only", "update", "hook-check", "check-update", "tree",
-    "merge-graphs", "clone", "benchmark",
+    "merge-graphs", "clone", "benchmark", "layers", "tour", "diff",
 }
 
 
@@ -1102,6 +1102,152 @@ def _run_update(watch_path: Path, *, force: bool = False,
         _write_wiki(watch_path)
     if not os.environ.get("MOONSHOT_API_KEY") and not os.environ.get("GRAPHIFY_NO_TIPS"):
         print("Tip: set MOONSHOT_API_KEY to use Kimi K2.6 for semantic extraction — 3x cheaper, richer graphs. pip install 'graphifyy[kimi]'")
+
+
+def _run_backend_build(watch_path: Path, *, backend: str,
+                       no_viz: bool = False, wiki: bool = False,
+                       force: bool = False) -> None:
+    from graphify.llm import BACKENDS, extract_corpus_parallel
+    from graphify.semantic_validate import validate_semantic_graph
+    from graphify.detect import detect
+    from graphify.extract import extract
+    from graphify.build import build_from_json
+    from graphify.cluster import cluster, score_all
+    from graphify.analyze import god_nodes, surprising_connections, suggest_questions
+    from graphify.report import generate
+    from graphify.export import to_json, to_html
+    from graphify.watch import _relativize_source_files, _report_root_label
+    from graphify.cache import check_semantic_cache, save_semantic_cache
+
+    if backend not in BACKENDS:
+        print(f"error: unknown backend {backend!r}. Available: {', '.join(sorted(BACKENDS))}", file=sys.stderr)
+        sys.exit(1)
+
+    detected = detect(watch_path)
+    files = detected.get("files", {})
+    code_files = [Path(f) for f in files.get("code", [])]
+    semantic_files = [
+        Path(f)
+        for key in ("document", "paper", "image")
+        for f in files.get(key, [])
+    ]
+
+    if not semantic_files:
+        _run_update(watch_path, force=force, no_viz=no_viz, wiki=wiki)
+        return
+
+    cached_nodes, cached_edges, cached_hyperedges, uncached = check_semantic_cache(
+        [str(f) for f in semantic_files],
+        root=watch_path,
+    )
+
+    print(f"Extracting AST graph for {len(code_files)} code file(s)...")
+    ast = extract(code_files, cache_root=watch_path.resolve()) if code_files else {
+        "nodes": [], "edges": [], "hyperedges": [], "input_tokens": 0, "output_tokens": 0,
+    }
+    cfg = BACKENDS[backend]
+    api_key = os.environ.get(cfg["env_key"], "")
+    if uncached and not api_key:
+        print(
+            f"error: backend '{backend}' requires {cfg['env_key']} for {len(uncached)} uncached semantic file(s).",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+    print(
+        f"Semantic cache: {len(cached_nodes)} cached node(s), "
+        f"{len(uncached)} uncached file(s)."
+    )
+    new_semantic = {"nodes": [], "edges": [], "hyperedges": [], "input_tokens": 0, "output_tokens": 0}
+    if uncached:
+        print(f"Extracting semantic graph for {len(uncached)} non-code file(s) with {backend}...")
+        new_semantic = extract_corpus_parallel(
+            [Path(f) for f in uncached],
+            backend=backend,
+            api_key=api_key,
+            root=watch_path,
+        )
+        save_semantic_cache(
+            new_semantic.get("nodes", []),
+            new_semantic.get("edges", []),
+            new_semantic.get("hyperedges", []),
+            root=watch_path,
+        )
+    semantic = validate_semantic_graph({
+        "nodes": cached_nodes + new_semantic.get("nodes", []),
+        "edges": cached_edges + new_semantic.get("edges", []),
+        "hyperedges": cached_hyperedges + new_semantic.get("hyperedges", []),
+        "input_tokens": new_semantic.get("input_tokens", 0),
+        "output_tokens": new_semantic.get("output_tokens", 0),
+    })
+    extraction = {
+        "nodes": ast.get("nodes", []) + semantic.get("nodes", []),
+        "edges": ast.get("edges", []) + semantic.get("edges", []),
+        "hyperedges": ast.get("hyperedges", []) + semantic.get("hyperedges", []),
+        "input_tokens": ast.get("input_tokens", 0) + semantic.get("input_tokens", 0),
+        "output_tokens": ast.get("output_tokens", 0) + semantic.get("output_tokens", 0),
+    }
+    project_root = Path.cwd().resolve() if not watch_path.is_absolute() else watch_path.resolve()
+    _relativize_source_files(extraction, project_root)
+
+    G = build_from_json(extraction)
+    communities = cluster(G)
+    cohesion = score_all(G, communities)
+    gods = god_nodes(G)
+    surprises = surprising_connections(G, communities)
+    labels = {cid: "Community " + str(cid) for cid in communities}
+    questions = suggest_questions(G, communities, labels)
+
+    out = watch_path / _GRAPHIFY_OUT
+    out.mkdir(exist_ok=True)
+    (out / ".graphify_root").write_text(str(watch_path.resolve()), encoding="utf-8")
+    if not to_json(G, communities, str(out / "graph.json"), force=force):
+        sys.exit(1)
+
+    detection = {
+        "files": {
+            "code": [str(f) for f in code_files],
+            "document": [str(f) for f in files.get("document", [])],
+            "paper": [str(f) for f in files.get("paper", [])],
+            "image": [str(f) for f in files.get("image", [])],
+        },
+        "total_files": len(code_files) + len(semantic_files),
+        "total_words": detected.get("total_words", 0),
+    }
+    report = generate(
+        G,
+        communities,
+        cohesion,
+        labels,
+        gods,
+        surprises,
+        detection,
+        {"input": extraction["input_tokens"], "output": extraction["output_tokens"]},
+        _report_root_label(watch_path),
+        suggested_questions=questions,
+    )
+    (out / "GRAPH_REPORT.md").write_text(report, encoding="utf-8")
+
+    html_target = out / "graph.html"
+    if no_viz:
+        if html_target.exists():
+            html_target.unlink()
+        print("Skipped graph.html (--no-viz).")
+    else:
+        try:
+            to_html(G, communities, str(html_target), community_labels=labels or None)
+        except ValueError as viz_err:
+            if html_target.exists():
+                html_target.unlink()
+            print(f"Skipped graph.html: {viz_err}")
+
+    if wiki:
+        _write_wiki(watch_path)
+    warning_count = len(semantic.get("warnings", []))
+    warning_suffix = f", {warning_count} semantic warning(s)" if warning_count else ""
+    print(
+        f"Graph built with {backend}: {G.number_of_nodes()} nodes, "
+        f"{G.number_of_edges()} edges{warning_suffix}."
+    )
 
 
 def _run_cluster_only(watch_path: Path, *, no_viz: bool = False,
@@ -1165,6 +1311,12 @@ def _run_path_first(argv: list[str]) -> None:
     args = argv[2:]
     no_viz = "--no-viz" in args
     wiki = "--wiki" in args
+    backend = None
+    for idx, arg in enumerate(args):
+        if arg == "--backend" and idx + 1 < len(args):
+            backend = args[idx + 1]
+        elif arg.startswith("--backend="):
+            backend = arg.split("=", 1)[1]
     force = (
         "--force" in args
         or os.environ.get("GRAPHIFY_FORCE", "").lower() in ("1", "true", "yes")
@@ -1177,6 +1329,9 @@ def _run_path_first(argv: list[str]) -> None:
         )
         if wiki:
             _write_wiki(watch_path)
+        return
+    if backend:
+        _run_backend_build(watch_path, backend=backend, no_viz=no_viz, wiki=wiki, force=force)
         return
     _run_update(watch_path, force=force, no_viz=no_viz, wiki=wiki)
 
@@ -1194,6 +1349,7 @@ def main() -> None:
         print()
         print("Commands:")
         print("  <path> [--update]       build/update graph for a folder (e.g. graphify .)")
+        print("    --backend kimi|claude  include direct LLM semantic extraction for docs/papers/images")
         print("    --cluster-only         rerun clustering without re-extracting")
         print("    --no-viz               skip graph.html generation")
         print("    --wiki                 build graphify-out/wiki/index.md")
@@ -1239,6 +1395,10 @@ def main() -> None:
         print("    --top-k-edges N         per-symbol outbound edges in inspector (default 12)")
         print("    --label NAME            project label in header")
         print("  benchmark [graph.json]  measure token reduction vs naive full-corpus approach")
+        print("  layers [--graph path]   list architecture layers detected from source paths")
+        print("  tour [--graph path]     print a Start here tour ordered by graph flow and layers")
+        print("  diff --files A B        show graph impact for changed files")
+        print("    --base REF             use git diff --name-only REF instead of --files")
         print("  hook install            install post-commit/post-checkout git hooks (all platforms)")
         print("  hook uninstall          remove git hooks")
         print("  hook status             check if git hooks are installed")
@@ -1696,11 +1856,27 @@ def main() -> None:
         force = os.environ.get("GRAPHIFY_FORCE", "").lower() in ("1", "true", "yes")
         no_viz = "--no-viz" in sys.argv[2:]
         wiki = "--wiki" in sys.argv[2:]
+        backend = None
+        args = sys.argv[2:]
+        i = 0
+        while i < len(args):
+            if args[i] == "--backend" and i + 1 < len(args):
+                backend = args[i + 1]
+                i += 2
+            elif args[i].startswith("--backend="):
+                backend = args[i].split("=", 1)[1]
+                i += 1
+            else:
+                i += 1
         argv = list(sys.argv)
         for flag in ("--force", "--no-viz", "--wiki"):
             if flag == "--force" and flag in argv[2:]:
                 force = True
             argv = [a for a in argv if a != flag]
+        if "--backend" in argv:
+            idx = argv.index("--backend")
+            del argv[idx:idx + 2]
+        argv = [a for a in argv if not a.startswith("--backend=")]
         if len(argv) > 2:
             watch_path = Path(argv[2])
         else:
@@ -1710,7 +1886,10 @@ def main() -> None:
                 watch_path = Path(saved.read_text(encoding="utf-8").strip())
             else:
                 watch_path = Path(".")
-        _run_update(watch_path, force=force, no_viz=no_viz, wiki=wiki)
+        if backend:
+            _run_backend_build(watch_path, backend=backend, no_viz=no_viz, wiki=wiki, force=force)
+        else:
+            _run_update(watch_path, force=force, no_viz=no_viz, wiki=wiki)
 
     elif cmd == "hook-check":
         # Codex Desktop rejects hookSpecificOutput.additionalContext on PreToolUse.
@@ -1839,6 +2018,95 @@ def main() -> None:
                 i += 1
         local_path = _clone_repo(url, branch=branch, out_dir=out_dir)
         print(local_path)
+
+    elif cmd == "diff":
+        import subprocess as _sp
+        graph_path = "graphify-out/graph.json"
+        changed_files: list[str] = []
+        base: str | None = None
+        args = sys.argv[2:]
+        i = 0
+        while i < len(args):
+            if args[i] == "--graph" and i + 1 < len(args):
+                graph_path = args[i + 1]
+                i += 2
+            elif args[i].startswith("--graph="):
+                graph_path = args[i].split("=", 1)[1]
+                i += 1
+            elif args[i] == "--files":
+                i += 1
+                while i < len(args) and not args[i].startswith("--"):
+                    changed_files.append(args[i])
+                    i += 1
+            elif args[i] == "--base" and i + 1 < len(args):
+                base = args[i + 1]
+                i += 2
+            elif args[i].startswith("--base="):
+                base = args[i].split("=", 1)[1]
+                i += 1
+            else:
+                i += 1
+        if base:
+            proc = _sp.run(["git", "diff", "--name-only", base], capture_output=True, text=True)
+            if proc.returncode != 0:
+                print(proc.stderr.strip() or f"error: git diff failed for base {base}", file=sys.stderr)
+                sys.exit(1)
+            changed_files.extend(line for line in proc.stdout.splitlines() if line)
+        if not changed_files:
+            print("Usage: graphify diff [--graph path] --files A B ... OR --base REF", file=sys.stderr)
+            sys.exit(1)
+        gp = Path(graph_path).resolve()
+        if not gp.exists():
+            print(f"error: graph file not found: {gp}", file=sys.stderr)
+            sys.exit(1)
+        from networkx.readwrite import json_graph
+        from graphify.impact import analyze_impact, format_impact_markdown
+        raw = json.loads(gp.read_text(encoding="utf-8"))
+        try:
+            G = json_graph.node_link_graph(raw, edges="links")
+        except TypeError:
+            G = json_graph.node_link_graph(raw)
+        impact = analyze_impact(G, changed_files)
+        print(format_impact_markdown(G, impact))
+
+    elif cmd in ("layers", "tour"):
+        graph_path = "graphify-out/graph.json"
+        args = sys.argv[2:]
+        i = 0
+        while i < len(args):
+            if args[i] == "--graph" and i + 1 < len(args):
+                graph_path = args[i + 1]
+                i += 2
+            elif args[i].startswith("--graph="):
+                graph_path = args[i].split("=", 1)[1]
+                i += 1
+            else:
+                i += 1
+        gp = Path(graph_path).resolve()
+        if not gp.exists():
+            print(f"error: graph file not found: {gp}", file=sys.stderr)
+            sys.exit(1)
+        from networkx.readwrite import json_graph
+        raw = json.loads(gp.read_text(encoding="utf-8"))
+        try:
+            G = json_graph.node_link_graph(raw, edges="links")
+        except TypeError:
+            G = json_graph.node_link_graph(raw)
+        if cmd == "layers":
+            from graphify.layers import annotate_layers
+            layers = annotate_layers(G)
+            counts: dict[str, int] = {}
+            for layer in layers.values():
+                counts[layer] = counts.get(layer, 0) + 1
+            print("Architecture layers")
+            for layer, count in sorted(counts.items()):
+                print(f"- {layer}: {count}")
+        else:
+            from graphify.tour import generate_tour
+            print("Start here")
+            for idx, item in enumerate(generate_tour(G, limit=25), start=1):
+                source = f" ({item['source_file']})" if item.get("source_file") else ""
+                print(f"{idx}. [{item['layer']}] {item['label']}{source}")
 
     elif cmd == "benchmark":
         from graphify.benchmark import run_benchmark, print_benchmark

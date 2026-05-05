@@ -77,6 +77,59 @@ def test_score_nodes_source_file_partial():
     assert "n2" in nids
 
 
+def test_score_nodes_prefers_project_node_over_fixture_duplicate():
+    G = nx.Graph()
+    G.add_node("prod", label="UserProfileView", source_file="graphify/ui/user.py", source_location="L1")
+    G.add_node("fixture", label="UserProfileView", source_file="tests/fixtures/user.py", source_location="L1")
+
+    scored = _score_nodes(G, ["userprofileview"])
+
+    assert scored[0][1] == "prod"
+
+
+def test_score_nodes_uses_metadata_without_requiring_label_match():
+    G = nx.Graph()
+    G.add_node(
+        "billing",
+        label="WebhookWorker",
+        source_file="graphify/billing.py",
+        source_location="L1",
+        summary="Handles billing retries and payment reconciliation.",
+        tags=["payments", "retries"],
+        language_notes="Service worker for billing webhooks.",
+    )
+
+    scored = _score_nodes(G, ["payment", "retries"])
+
+    assert scored
+    assert scored[0][1] == "billing"
+
+
+def test_score_nodes_can_filter_by_node_type():
+    G = nx.Graph()
+    G.add_node("class", label="UserProfile", source_file="graphify/models.py", kind="class")
+    G.add_node("function", label="load_user_profile", source_file="graphify/models.py", kind="function")
+
+    scored = _score_nodes(G, ["user", "profile"], node_types=["class"])
+
+    assert [nid for _, nid in scored] == ["class"]
+
+
+def test_score_nodes_generic_exact_label_does_not_dominate_broader_question():
+    G = nx.Graph()
+    G.add_node("main", label="main()", source_file="graphify/__main__.py")
+    G.add_node(
+        "entry",
+        label="cli_entrypoint",
+        source_file="graphify/__main__.py",
+        summary="Main entry point for terminal commands.",
+    )
+
+    scored = _score_nodes(G, ["main", "entry", "point"])
+
+    assert scored[0][1] == "entry"
+
+
 def test_infer_context_filters_for_calls_question():
     assert _infer_context_filters("who calls extract") == ["call"]
 

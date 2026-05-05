@@ -20,7 +20,7 @@ Backend setup:
 | Kimi / OpenAI-compatible | `pip install "graphifyy[kimi]"` or `graphifyy[llm]` | `MOONSHOT_API_KEY` |
 | Claude direct | `pip install "graphifyy[claude]"` or `graphifyy[llm]` | `ANTHROPIC_API_KEY` |
 
-Code-only corpora stay on the AST-only path even if `--backend` is present, so they do not require an API key.
+Code-only corpora stay on the AST-only path even if `--backend` is present, so they do not require an API key. Direct Kimi runs also require the `openai` SDK from the `kimi` or `llm` extra in the active Python environment. A Moonshot `429 exceeded_current_quota_error` means the key reached Moonshot, but the account needs credit/top-up.
 
 ---
 

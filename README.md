@@ -177,11 +177,16 @@ pip install "graphifyy[llm]"
 export MOONSHOT_API_KEY=...      # for --backend kimi
 export ANTHROPIC_API_KEY=...     # for --backend claude
 
+# Local checkout / development install:
+python -m pip install -e ".[kimi]"
+
 graphify . --backend kimi --no-viz
 graphify update . --backend claude
 ```
 
 Use assistant-mediated `/graphify` when you want your coding assistant to dispatch its own semantic extraction workers. Use `--backend kimi|claude` when you want the terminal CLI to call the provider directly. Graphify validates and normalizes semantic output before merging it into `graph.json`.
+
+If `--backend kimi` reports that the `openai` package is missing, install `graphifyy[kimi]` or `graphifyy[llm]` into the same Python environment that runs `graphify`. If Moonshot returns `429 exceeded_current_quota_error`, the API key is valid enough to reach billing, but the Moonshot account needs credit/top-up before semantic extraction can run.
 
 ---
 
@@ -231,6 +236,9 @@ graphify query "what connects DigestAuth to Response?" --graph graphify-out/grap
 
 # expose the graph as an MCP server (for repeated tool-call access)
 python -m graphify.serve graphify-out/graph.json
+
+# register the graph server with Kimi CLI
+kimi mcp add --transport stdio graphify -- python -m graphify.serve graphify-out/graph.json
 ```
 
 The MCP server gives your assistant structured access: `query_graph`, `get_node`, `get_neighbors`, `shortest_path`.

@@ -25,6 +25,17 @@ Type `/graphify` in your AI coding assistant, or run `graphify .` in a normal te
 
 > **Maintained fork:** This repository is a maintained fork of [`safishamsi/graphify`](https://github.com/safishamsi/graphify), with local changes focused on terminal-first Graphify usage. Original copyright and MIT license attribution are preserved in [`LICENSE`](LICENSE).
 
+## Maintained fork improvements
+
+This fork keeps the original project shape but absorbs and extends the parts needed for repeatable terminal and agent workflows:
+
+- **Terminal-first semantic extraction:** Direct `--backend kimi` and `--backend claude` paths let the CLI enrich docs, papers, and images without relying on an assistant wrapper.
+- **Assistant integration breadth:** Installers cover Claude Code, Codex, OpenCode, Cursor, Gemini CLI, Copilot, Aider, OpenClaw, Factory Droid, Trae, Hermes, Kiro, Pi, and Google Antigravity.
+- **Agent-readable graph outputs:** `GRAPH_REPORT.md`, `graph.json`, optional markdown wiki output, and the MCP server make the graph usable by coding agents after the initial build.
+- **Deterministic code graph updates:** `graphify update .` refreshes code structure with AST extraction only, avoiding API cost for normal code edits.
+- **Evaluation and scoring:** The benchmark harness scores graph usefulness with corpus-token reduction, query context size, expected-node recall, missed expected nodes, missed connected nodes, and noisy-node rate.
+- **Cherry-picked hardening:** The fork keeps upstream-compatible schema validation, confidence labels, security checks, cache behavior, and language extractor patterns while adding local workflow fixes where they reduce agent friction.
+
 Works in Claude Code, Codex, OpenCode, Cursor, Gemini CLI, GitHub Copilot CLI, VS Code Copilot Chat, Aider, OpenClaw, Factory Droid, Trae, Hermes, Kiro, Pi, and Google Antigravity.
 
 ```
@@ -33,11 +44,12 @@ Works in Claude Code, Codex, OpenCode, Cursor, Gemini CLI, GitHub Copilot CLI, V
 graphify .
 ```
 
-That's it. You get three files:
+That's it. You get four core files:
 
 ```
 graphify-out/
-├── graph.html       open in any browser — click nodes, filter, search
+├── graphify.html    standalone dashboard — overview, searchable nodes, report, wiki
+├── graph.html       legacy force-directed graph — click nodes, filter, search
 ├── GRAPH_REPORT.md  the highlights: key concepts, surprising connections, suggested questions
 └── graph.json       the full graph — query it anytime without re-reading your files
 ```
@@ -148,8 +160,9 @@ graphify . --backend kimi          # include direct LLM extraction for docs/pape
 graphify update . --backend claude # refresh semantic files from a normal terminal
 graphify ./docs --update           # re-extract only changed files
 graphify . --cluster-only          # rerun clustering without re-extracting
-graphify . --no-viz                # skip the HTML, just the report + JSON
+graphify . --no-viz                # skip HTML outputs, just the report + JSON
 graphify . --wiki                  # build a markdown wiki from the graph
+graphify dashboard .               # serve graphify-out as a tokenized live dashboard
 
 graphify query "what connects auth to the database?"
 graphify path "UserService" "DatabasePool"
@@ -268,7 +281,7 @@ graphify .                         # build/update current directory
 graphify ./raw                     # build/update a specific folder
 graphify ./raw --update            # accepted alias for path-first update
 graphify ./raw --cluster-only      # rerun clustering on existing graph
-graphify ./raw --no-viz            # skip HTML visualization
+graphify ./raw --no-viz            # skip HTML outputs
 graphify ./raw --wiki              # build agent-crawlable markdown wiki
 
 graphify add https://arxiv.org/abs/1706.03762

@@ -1,8 +1,11 @@
 # generate GRAPH_REPORT.md - the human-readable audit trail
 from __future__ import annotations
 import re
+from collections import Counter
 from datetime import date
 import networkx as nx
+
+_MAX_COMMUNITY_HUBS = 20
 
 
 def _safe_community_name(label: str) -> str:
@@ -10,6 +13,124 @@ def _safe_community_name(label: str) -> str:
     cleaned = re.sub(r'[\\/*?:"<>|#^[\]]', "", label.replace("\r\n", " ").replace("\r", " ").replace("\n", " ")).strip()
     cleaned = re.sub(r"\.(md|mdx|markdown)$", "", cleaned, flags=re.IGNORECASE)
     return cleaned or "unnamed"
+
+
+def _community_target(cid: int) -> str:
+    return f"_COMMUNITY_Community_{cid}"
+
+
+def _is_generic_community_label(label: str, cid: int) -> bool:
+    return label.strip().lower() == f"community {cid}".lower()
+
+
+def _display_community_label(G: nx.Graph, nodes: list[str], cid: int, fallback: str) -> str:
+    """Return a deterministic useful label when no semantic community name exists."""
+    if fallback and not _is_generic_community_label(fallback, cid):
+        return fallback
+
+    real_nodes = [n for n in nodes if n in G and not _is_report_file_node(G, n)]
+    source_counts: dict[str, int] = {}
+    for node in real_nodes:
+        source_file = str(G.nodes[node].get("source_file") or "")
+        if not source_file:
+            continue
+        parts = source_file.split("/")
+        source = "/".join(parts[:2]) if len(parts) > 1 else parts[0]
+        if source:
+            source_counts[source] = source_counts.get(source, 0) + 1
+
+    top_sources = [name for name, _ in sorted(source_counts.items(), key=lambda item: (-item[1], item[0]))[:2]]
+    if top_sources:
+        return " / ".join(top_sources)
+
+    top_nodes = sorted(
+        real_nodes,
+        key=lambda node: (-G.degree(node), str(G.nodes[node].get("label", node)).lower()),
+    )[:2]
+    if top_nodes:
+        return " + ".join(str(G.nodes[node].get("label", node)) for node in top_nodes)
+
+    return fallback or f"Community {cid}"
+
+
+def _community_hint(G: nx.Graph, nodes: list[str], label: str, limit: int = 2) -> str:
+    real_nodes = [n for n in nodes if n in G and not _is_report_file_node(G, n)]
+    hints: list[str] = []
+    for node in sorted(
+        real_nodes,
+        key=lambda node_id: (-G.degree(node_id), str(G.nodes[node_id].get("label", node_id)).lower()),
+    ):
+        node_label = str(G.nodes[node].get("label", node))
+        if not node_label or node_label == label or node_label in hints:
+            continue
+        hints.append(node_label)
+        if len(hints) >= limit:
+            break
+    return ", ".join(hints)
+
+
+def display_community_labels(
+    G: nx.Graph,
+    communities: dict[int, list[str]],
+    community_labels: dict[int, str],
+) -> dict[int, str]:
+    labels = {
+        cid: _display_community_label(G, nodes, cid, community_labels.get(cid, f"Community {cid}"))
+        for cid, nodes in communities.items()
+    }
+    counts = Counter(labels.values())
+    candidates: dict[int, str] = {}
+    for cid, nodes in communities.items():
+        label = labels[cid]
+        if counts[label] > 1:
+            hint = _community_hint(G, nodes, label)
+            if hint:
+                label = f"{label} - {hint}"
+            else:
+                label = f"{label} #{cid}"
+        candidates[cid] = label
+
+    candidate_counts = Counter(candidates.values())
+    result: dict[int, str] = {}
+    for cid, label in candidates.items():
+        if candidate_counts[label] > 1:
+            label = f"{label} #{cid}"
+        result[cid] = label
+    return result
+
+
+def _is_report_file_node(G: nx.Graph, node: str) -> bool:
+    from .analyze import _is_file_node
+    return _is_file_node(G, node)
+
+
+def _community_sample(G: nx.Graph, nodes: list[str], limit: int = 4) -> str:
+    real_nodes = [n for n in nodes if n in G and not _is_report_file_node(G, n)]
+    ranked = sorted(
+        real_nodes,
+        key=lambda node: (-G.degree(node), str(G.nodes[node].get("label", node)).lower()),
+    )[:limit]
+    return ", ".join(f"`{G.nodes[node].get('label', node)}`" for node in ranked)
+
+
+def _source_root_summary(detection_result: dict, limit: int = 8) -> list[str]:
+    files = detection_result.get("files") or {}
+    counts: dict[str, int] = {}
+    for paths in files.values():
+        for value in paths:
+            path = str(value)
+            root = path.split("/", 1)[0] if "/" in path else path
+            if root:
+                counts[root] = counts.get(root, 0) + 1
+    if not counts:
+        return []
+    parts = [
+        f"{root} ({count})"
+        for root, count in sorted(counts.items(), key=lambda item: (-item[1], item[0]))[:limit]
+    ]
+    if len(counts) > limit:
+        parts.append(f"+{len(counts) - limit} more")
+    return parts
 
 
 def generate(
@@ -49,15 +170,20 @@ def generate(
             f"- {detection_result['total_files']} files · ~{detection_result['total_words']:,} words",
             "- Verdict: corpus is large enough that graph structure adds value.",
         ]
+    source_roots = _source_root_summary(detection_result)
+    if source_roots:
+        lines.append(f"- Indexed roots: {', '.join(source_roots)}")
 
     from .analyze import _is_file_node as _ifn
     non_empty = {cid: nodes for cid, nodes in communities.items()
                  if any(not _ifn(G, n) for n in nodes)}
+    display_labels = display_community_labels(G, communities, community_labels)
 
     lines += [
         "",
         "## Summary",
-        f"- {G.number_of_nodes()} nodes · {G.number_of_edges()} edges · {len(non_empty)} communities detected",
+        f"- {G.number_of_nodes()} nodes · {G.number_of_edges()} edges · "
+        f"{len(non_empty)} concept communities · {len(communities)} total clusters",
         f"- Extraction: {ext_pct}% EXTRACTED · {inf_pct}% INFERRED · {amb_pct}% AMBIGUOUS"
         + (f" · INFERRED: {len(inf_edges)} edges (avg confidence: {inf_avg})" if inf_avg is not None else ""),
         f"- Token cost: {token_cost.get('input', 0):,} input · {token_cost.get('output', 0):,} output",
@@ -66,11 +192,25 @@ def generate(
     # Community hub navigation - links to _COMMUNITY_*.md files in the Obsidian vault.
     # Without these, GRAPH_REPORT.md is a dead-end and the vault splits into disconnected components.
     if non_empty:
+        ranked_hubs = sorted(
+            non_empty.items(),
+            key=lambda item: (
+                -sum(1 for n in item[1] if not _ifn(G, n)),
+                str(display_labels.get(item[0], f"Community {item[0]}")).lower(),
+            ),
+        )
         lines += ["", "## Community Hubs (Navigation)"]
-        for cid in non_empty:
-            label = community_labels.get(cid, f"Community {cid}")
-            safe = _safe_community_name(label)
-            lines.append(f"- [[_COMMUNITY_{safe}|{label}]]")
+        if len(ranked_hubs) > _MAX_COMMUNITY_HUBS:
+            lines.append(
+                f"_Showing the {_MAX_COMMUNITY_HUBS} largest communities; "
+                f"{len(ranked_hubs) - _MAX_COMMUNITY_HUBS} smaller communities are listed below._"
+            )
+        for cid, nodes in ranked_hubs[:_MAX_COMMUNITY_HUBS]:
+            label = display_labels.get(cid, f"Community {cid}")
+            target = _community_target(cid)
+            sample = _community_sample(G, nodes)
+            suffix = f" - {sample}" if sample else ""
+            lines.append(f"- [[{target}|{label}]] ({len(nodes)} nodes){suffix}")
 
     lines += [
         "",
@@ -115,7 +255,7 @@ def generate(
     )
     lines += ["", f"## Communities ({len(communities)} total, {thin_count} thin omitted)"]
     for cid, nodes in communities.items():
-        label = community_labels.get(cid, f"Community {cid}")
+        label = display_labels.get(cid, f"Community {cid}")
         score = cohesion_scores.get(cid, 0.0)
         # Filter method/function stubs from display - they're structural noise
         real_nodes = [n for n in nodes if not _ifn(G, n)]

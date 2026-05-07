@@ -1,0 +1,10 @@
+# Local agent/runtime state
+ψ/
+.opencode/
+.omx/
+
+# Generated examples and benchmark scratch corpora, not graphify source
+worked/
+
+# Platform noise
+.DS_Store

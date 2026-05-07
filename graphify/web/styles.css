@@ -1,0 +1,32 @@
+* { box-sizing: border-box; }
+body { margin: 0; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; color: #18212f; background: #f6f7f9; }
+.shell { min-height: 100vh; display: grid; grid-template-columns: 240px 1fr; }
+.sidebar { background: #111827; color: #f9fafb; padding: 20px; display: flex; flex-direction: column; gap: 20px; }
+.brand { font-size: 22px; font-weight: 700; }
+nav { display: grid; gap: 8px; }
+button { border: 0; border-radius: 6px; padding: 10px 12px; text-align: left; color: #d1d5db; background: transparent; cursor: pointer; font: inherit; }
+button.active, button:hover { color: #ffffff; background: #374151; }
+.status { margin-top: auto; color: #9ca3af; font-size: 13px; overflow-wrap: anywhere; }
+main { padding: 24px; overflow: auto; }
+.view { display: none; }
+.view.active { display: block; }
+.toolbar { display: grid; grid-template-columns: minmax(180px, 380px) 1fr; gap: 12px; align-items: center; margin-bottom: 12px; }
+input { width: 100%; border: 1px solid #cbd5e1; border-radius: 6px; padding: 10px 12px; color: #18212f; background: #ffffff; font: inherit; }
+.summary { color: #6b7280; font-size: 13px; }
+.metrics { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; margin-bottom: 18px; }
+.metrics div, .panel, .list, .wiki-page, pre { background: #ffffff; border: 1px solid #e5e7eb; border-radius: 8px; padding: 16px; }
+.metrics span { display: block; font-size: 32px; font-weight: 700; }
+.metrics label { color: #6b7280; font-size: 13px; }
+.list { display: grid; gap: 8px; margin-bottom: 16px; }
+.wiki-layout { display: grid; grid-template-columns: minmax(220px, 340px) minmax(0, 900px); gap: 16px; align-items: start; }
+#wiki-list { max-height: calc(100vh - 150px); overflow: auto; margin-bottom: 0; }
+.item { padding: 10px 12px; border: 1px solid #e5e7eb; border-radius: 6px; background: #ffffff; cursor: pointer; }
+.item:hover, .item.active { border-color: #2563eb; }
+.item.active { background: #eff6ff; color: #1d4ed8; }
+.wiki-page, .markdown { line-height: 1.6; max-width: 900px; }
+.wiki-page a, .markdown a { color: #155eef; }
+.wiki-page code, .markdown code { background: #eef2f7; border-radius: 4px; padding: 1px 4px; }
+.markdown h1, .markdown h2, .markdown h3 { margin-top: 0; }
+pre { white-space: pre-wrap; overflow-wrap: anywhere; margin: 0; }
+@media (max-width: 900px) { .wiki-layout { grid-template-columns: 1fr; } #wiki-list { max-height: 320px; } }
+@media (max-width: 760px) { .shell { grid-template-columns: 1fr; } .sidebar { min-height: auto; } .metrics, .toolbar { grid-template-columns: 1fr; } }

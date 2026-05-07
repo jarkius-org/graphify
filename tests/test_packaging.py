@@ -12,3 +12,14 @@ def test_optional_dependencies_include_direct_llm_backends():
     assert "anthropic" in extras["claude"]
     assert "openai" in extras["llm"]
     assert "anthropic" in extras["llm"]
+
+
+def test_dashboard_assets_are_packaged():
+    data = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))
+
+    assert "graphify.web" in data["tool"]["setuptools"]["packages"]
+    assert set(data["tool"]["setuptools"]["package-data"]["graphify.web"]) == {
+        "index.html",
+        "app.js",
+        "styles.css",
+    }

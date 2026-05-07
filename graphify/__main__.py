@@ -1047,7 +1047,7 @@ _COMMANDS = {
     "aider", "codex", "opencode", "claw", "droid", "trae", "trae-cn", "hermes",
     "antigravity", "hook", "query", "save-result", "path", "explain", "add",
     "watch", "cluster-only", "update", "hook-check", "check-update", "tree",
-    "merge-graphs", "clone", "benchmark", "layers", "tour", "diff",
+    "merge-graphs", "clone", "benchmark", "layers", "tour", "diff", "dashboard", "web",
 }
 
 
@@ -1069,7 +1069,14 @@ def _write_wiki(watch_path: Path) -> None:
 
     raw = json.loads(graph_json.read_text(encoding="utf-8"))
     G = build_from_json(raw, directed=bool(raw.get("directed", False)))
-    communities = cluster(G)
+    communities: dict[int, list[str]] = {}
+    for node_id, data in G.nodes(data=True):
+        cid = data.get("community")
+        if cid is None:
+            continue
+        communities.setdefault(cid, []).append(node_id)
+    if not communities:
+        communities = cluster(G)
     cohesion = score_all(G, communities)
     gods = god_nodes(G)
     labels = {cid: f"Community {cid}" for cid in communities}
@@ -1231,6 +1238,8 @@ def _run_backend_build(watch_path: Path, *, backend: str,
     if no_viz:
         if html_target.exists():
             html_target.unlink()
+        from graphify.dashboard_html import remove_dashboard_html
+        remove_dashboard_html(out)
         print("Skipped graph.html (--no-viz).")
     else:
         try:
@@ -1239,6 +1248,8 @@ def _run_backend_build(watch_path: Path, *, backend: str,
             if html_target.exists():
                 html_target.unlink()
             print(f"Skipped graph.html: {viz_err}")
+        from graphify.dashboard_html import write_dashboard_html
+        write_dashboard_html(out)
 
     if wiki:
         _write_wiki(watch_path)
@@ -1294,16 +1305,22 @@ def _run_cluster_only(watch_path: Path, *, no_viz: bool = False,
     if no_viz:
         if html_target.exists():
             html_target.unlink()
-        print(f"Done — {len(communities)} communities. GRAPH_REPORT.md and graph.json updated (--no-viz; graph.html removed).")
+        from graphify.dashboard_html import remove_dashboard_html
+        remove_dashboard_html(out)
+        print(f"Done — {len(communities)} communities. GRAPH_REPORT.md and graph.json updated (--no-viz; HTML outputs removed).")
     else:
         try:
             to_html(G, communities, str(html_target), community_labels=labels or None)
-            print(f"Done — {len(communities)} communities. GRAPH_REPORT.md, graph.json and graph.html updated.")
+            html_outputs = "graph.html"
         except ValueError as viz_err:
             if html_target.exists():
                 html_target.unlink()
             print(f"Skipped graph.html: {viz_err}")
-            print(f"Done — {len(communities)} communities. GRAPH_REPORT.md and graph.json updated.")
+            html_outputs = ""
+        from graphify.dashboard_html import write_dashboard_html
+        write_dashboard_html(out)
+        outputs = f"{html_outputs + ', ' if html_outputs else ''}graphify.html"
+        print(f"Done — {len(communities)} communities. GRAPH_REPORT.md, graph.json and {outputs} updated.")
 
 
 def _run_path_first(argv: list[str]) -> None:
@@ -1336,6 +1353,57 @@ def _run_path_first(argv: list[str]) -> None:
     _run_update(watch_path, force=force, no_viz=no_viz, wiki=wiki)
 
 
+def _run_dashboard_command(args: list[str]) -> None:
+    host = "127.0.0.1"
+    port = 8765
+    graph_dir = None
+    token = None
+    project_path = "."
+    i = 0
+    while i < len(args):
+        arg = args[i]
+        if arg == "--host" and i + 1 < len(args):
+            host = args[i + 1]
+            i += 2
+        elif arg.startswith("--host="):
+            host = arg.split("=", 1)[1]
+            i += 1
+        elif arg == "--port" and i + 1 < len(args):
+            try:
+                port = int(args[i + 1])
+            except ValueError:
+                print("error: --port must be an integer", file=sys.stderr)
+                sys.exit(1)
+            i += 2
+        elif arg.startswith("--port="):
+            try:
+                port = int(arg.split("=", 1)[1])
+            except ValueError:
+                print("error: --port must be an integer", file=sys.stderr)
+                sys.exit(1)
+            i += 1
+        elif arg == "--graph-dir" and i + 1 < len(args):
+            graph_dir = args[i + 1]
+            i += 2
+        elif arg.startswith("--graph-dir="):
+            graph_dir = arg.split("=", 1)[1]
+            i += 1
+        elif arg == "--token" and i + 1 < len(args):
+            token = args[i + 1]
+            i += 2
+        elif arg.startswith("--token="):
+            token = arg.split("=", 1)[1]
+            i += 1
+        elif arg.startswith("--"):
+            print(f"error: unknown dashboard option {arg}", file=sys.stderr)
+            sys.exit(1)
+        else:
+            project_path = arg
+            i += 1
+    from graphify.web_server import serve_dashboard
+    serve_dashboard(Path(project_path), host=host, port=port, graph_dir=graph_dir, token=token)
+
+
 def main() -> None:
     # Check all known skill install locations for a stale version stamp.
     # Skip during install/uninstall (hook writes trigger a fresh check anyway).
@@ -1351,7 +1419,7 @@ def main() -> None:
         print("  <path> [--update]       build/update graph for a folder (e.g. graphify .)")
         print("    --backend kimi|claude  include direct LLM semantic extraction for docs/papers/images")
         print("    --cluster-only         rerun clustering without re-extracting")
-        print("    --no-viz               skip graph.html generation")
+        print("    --no-viz               skip graph.html and graphify.html generation")
         print("    --wiki                 build graphify-out/wiki/index.md")
         print("  install [--platform P]  copy skill to platform config dir (claude|windows|codex|opencode|aider|claw|droid|trae|trae-cn|gemini|cursor|antigravity|hermes|kiro|pi)")
         print("  path \"A\" \"B\"            shortest path between two nodes in graph.json")
@@ -1368,13 +1436,18 @@ def main() -> None:
         print("    --contributor \"Name\"    tag who added it to the corpus")
         print("    --dir <path>            target directory (default: ./raw)")
         print("  watch <path>            watch a folder and rebuild the graph on code changes")
+        print("  dashboard [path]        serve a tokenized graph/wiki dashboard (alias: web)")
+        print("    --host HOST            host to bind (default 127.0.0.1)")
+        print("    --port PORT            port to bind (default 8765)")
+        print("    --graph-dir DIR        graph output dir (default <path>/graphify-out)")
+        print("    --token TOKEN          use a fixed dashboard token")
         print("  update <path>           re-extract code files and update the graph (no LLM needed)")
         print("    --force                 overwrite graph.json even if the rebuild has fewer nodes")
-        print("    --no-viz                skip graph.html generation")
+        print("    --no-viz                skip graph.html and graphify.html generation")
         print("    --wiki                  build graphify-out/wiki/index.md after update")
         print("                            (also: GRAPHIFY_FORCE=1 env var; use after refactors that delete code)")
         print("  cluster-only <path>     rerun clustering on an existing graph.json and regenerate report")
-        print("    --no-viz                skip graph.html generation (useful for >5000 node graphs / CI)")
+        print("    --no-viz                skip graph.html and graphify.html generation (useful for CI)")
         print("  query \"<question>\"       BFS traversal of graph.json for a question")
         print("    --dfs                   use depth-first instead of breadth-first")
         print("    --context C             explicit edge-context filter (repeatable)")
@@ -1442,7 +1515,9 @@ def main() -> None:
         _run_path_first(sys.argv)
         return
 
-    if cmd == "install":
+    if cmd in ("dashboard", "web"):
+        _run_dashboard_command(sys.argv[2:])
+    elif cmd == "install":
         # Default to windows platform on Windows, claude elsewhere
         default_platform = "windows" if platform.system() == "Windows" else "claude"
         chosen_platform = default_platform
@@ -1841,16 +1916,22 @@ def main() -> None:
         if no_viz:
             if html_target.exists():
                 html_target.unlink()
-            print(f"Done — {len(communities)} communities. GRAPH_REPORT.md and graph.json updated (--no-viz; graph.html removed).")
+            from graphify.dashboard_html import remove_dashboard_html
+            remove_dashboard_html(out)
+            print(f"Done — {len(communities)} communities. GRAPH_REPORT.md and graph.json updated (--no-viz; HTML outputs removed).")
         else:
             try:
                 to_html(G, communities, str(html_target), community_labels=labels or None)
-                print(f"Done — {len(communities)} communities. GRAPH_REPORT.md, graph.json and graph.html updated.")
+                html_outputs = "graph.html"
             except ValueError as viz_err:
                 if html_target.exists():
                     html_target.unlink()
                 print(f"Skipped graph.html: {viz_err}")
-                print(f"Done — {len(communities)} communities. GRAPH_REPORT.md and graph.json updated.")
+                html_outputs = ""
+            from graphify.dashboard_html import write_dashboard_html
+            write_dashboard_html(out)
+            outputs = f"{html_outputs + ', ' if html_outputs else ''}graphify.html"
+            print(f"Done — {len(communities)} communities. GRAPH_REPORT.md, graph.json and {outputs} updated.")
 
     elif cmd == "update":
         force = os.environ.get("GRAPHIFY_FORCE", "").lower() in ("1", "true", "yes")

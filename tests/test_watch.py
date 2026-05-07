@@ -126,6 +126,9 @@ def test_rebuild_code_preserves_non_code_source_nodes(tmp_path):
     from graphify.watch import _rebuild_code
 
     (tmp_path / "index.php").write_text("<?php echo 'fresh';\n", encoding="utf-8")
+    docs = tmp_path / "docs"
+    docs.mkdir()
+    (docs / "note.md").write_text("# Note\n\nSemantic context.", encoding="utf-8")
     out = tmp_path / "graphify-out"
     out.mkdir()
     (out / "graph.json").write_text(json.dumps({
@@ -143,6 +146,33 @@ def test_rebuild_code_preserves_non_code_source_nodes(tmp_path):
     rebuilt = json.loads((out / "graph.json").read_text(encoding="utf-8"))
     node_ids = {n["id"] for n in rebuilt["nodes"]}
     assert "doc_note" in node_ids
+
+
+def test_rebuild_code_drops_nodes_from_ignored_sources(tmp_path):
+    from graphify.watch import _rebuild_code
+
+    (tmp_path / ".graphifyignore").write_text("scratch/\n", encoding="utf-8")
+    (tmp_path / "index.php").write_text("<?php echo 'fresh';\n", encoding="utf-8")
+    scratch = tmp_path / "scratch"
+    scratch.mkdir()
+    (scratch / "old.md").write_text("# Old ignored semantic context.", encoding="utf-8")
+    out = tmp_path / "graphify-out"
+    out.mkdir()
+    (out / "graph.json").write_text(json.dumps({
+        "directed": False,
+        "multigraph": False,
+        "graph": {},
+        "nodes": [
+            {"id": "old_note", "label": "Old Note", "file_type": "document", "source_file": "scratch/old.md"},
+        ],
+        "links": [],
+    }), encoding="utf-8")
+
+    assert _rebuild_code(tmp_path, force=True) is True
+
+    rebuilt = json.loads((out / "graph.json").read_text(encoding="utf-8"))
+    node_ids = {n["id"] for n in rebuilt["nodes"]}
+    assert "old_note" not in node_ids
 
 
 def test_watch_raises_without_watchdog(tmp_path, monkeypatch):

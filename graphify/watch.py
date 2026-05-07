@@ -36,6 +36,13 @@ def _relativize_source_files(payload: dict, root: Path) -> None:
                 continue
 
 
+def _display_source_path(path: Path, root: Path) -> str:
+    try:
+        return str(path.resolve().relative_to(root))
+    except ValueError:
+        return str(path)
+
+
 def _rebuild_code(watch_path: Path, *, follow_symlinks: bool = False,
                   force: bool = False, no_viz: bool = False) -> bool:
     """Re-run AST extraction + build + cluster + report for code files. No LLM needed.
@@ -91,13 +98,26 @@ def _rebuild_code(watch_path: Path, *, follow_symlinks: bool = False,
                     return p.as_posix()
 
                 code_source_keys = {_source_key(f) for f in code_files}
+                detected_source_keys = {
+                    _source_key(f)
+                    for bucket in detected.get("files", {}).values()
+                    for f in bucket
+                }
 
                 def _owned_by_current_code(item: dict) -> bool:
                     return _source_key(item.get("source_file")) in code_source_keys
 
+                def _still_in_detected_corpus(item: dict) -> bool:
+                    source = _source_key(item.get("source_file"))
+                    return source is None or source in detected_source_keys
+
                 preserved_nodes = [
                     n for n in existing.get("nodes", [])
-                    if n["id"] not in new_ast_ids and not _owned_by_current_code(n)
+                    if (
+                        n["id"] not in new_ast_ids
+                        and not _owned_by_current_code(n)
+                        and _still_in_detected_corpus(n)
+                    )
                 ]
                 all_ids = new_ast_ids | {n["id"] for n in preserved_nodes}
                 preserved_edges = [
@@ -118,7 +138,7 @@ def _rebuild_code(watch_path: Path, *, follow_symlinks: bool = False,
         _relativize_source_files(result, project_root)
 
         detection = {
-            "files": {"code": [str(f) for f in code_files], "document": [], "paper": [], "image": []},
+            "files": {"code": [_display_source_path(f, project_root) for f in code_files], "document": [], "paper": [], "image": []},
             "total_files": len(code_files),
             "total_words": detected.get("total_words", 0),
         }
@@ -153,7 +173,9 @@ def _rebuild_code(watch_path: Path, *, follow_symlinks: bool = False,
         if no_viz:
             if stale.exists():
                 stale.unlink()
-            print("[graphify watch] Skipped graph.html (--no-viz).")
+            from graphify.dashboard_html import remove_dashboard_html
+            remove_dashboard_html(out)
+            print("[graphify watch] Skipped graph.html and graphify.html (--no-viz).")
         else:
             # to_html raises ValueError for graphs > MAX_NODES_FOR_VIZ (5000).
             # Wrap so core outputs (graph.json + GRAPH_REPORT.md) always land.
@@ -164,6 +186,8 @@ def _rebuild_code(watch_path: Path, *, follow_symlinks: bool = False,
                 print(f"[graphify watch] Skipped graph.html: {viz_err}")
                 if stale.exists():
                     stale.unlink()
+            from graphify.dashboard_html import write_dashboard_html
+            write_dashboard_html(out)
 
         # clear stale needs_update flag if present
         flag = out / "needs_update"
@@ -172,7 +196,8 @@ def _rebuild_code(watch_path: Path, *, follow_symlinks: bool = False,
 
         print(f"[graphify watch] Rebuilt: {G.number_of_nodes()} nodes, "
               f"{G.number_of_edges()} edges, {len(communities)} communities")
-        products = "graph.json" + (", graph.html" if html_written else "") + " and GRAPH_REPORT.md"
+        html_products = ", graph.html, graphify.html" if html_written else ", graphify.html"
+        products = "graph.json" + (html_products if not no_viz else "") + " and GRAPH_REPORT.md"
         print(f"[graphify watch] {products} updated in {out}")
         return True
 

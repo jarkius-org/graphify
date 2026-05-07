@@ -55,9 +55,68 @@ def test_report_shows_token_cost():
     assert "Token cost" in report
     assert "1,200" in report
 
+
+def test_report_shows_indexed_source_roots():
+    G, communities, cohesion, labels, gods, surprises, detection, tokens = make_inputs()
+    detection = {
+        **detection,
+        "files": {
+            "code": ["graphify/report.py", "graphify/watch.py", "tests/test_report.py"],
+            "document": ["README.md"],
+        },
+    }
+    report = generate(G, communities, cohesion, labels, gods, surprises, detection, tokens, "./project")
+    assert "Indexed roots: graphify (2), README.md (1), tests (1)" in report
+
 def test_report_shows_raw_cohesion_scores():
     G, communities, cohesion, labels, gods, surprises, detection, tokens = make_inputs()
     report = generate(G, communities, cohesion, labels, gods, surprises, detection, tokens, "./project", min_community_size=1)
     assert "Cohesion:" in report
     assert "✓" not in report
     assert "⚠" not in report
+
+
+def test_report_caps_community_hubs_and_uses_content_labels():
+    import networkx as nx
+
+    G = nx.Graph()
+    communities = {}
+    labels = {}
+    cohesion = {}
+    for cid in range(25):
+        nodes = []
+        for idx in range(3):
+            node = f"node_{cid}_{idx}"
+            G.add_node(node, label=f"Thing {cid}.{idx}", source_file=f"src/domain_{cid}/module.py")
+            nodes.append(node)
+        G.add_edge(nodes[0], nodes[1], confidence="EXTRACTED")
+        G.add_edge(nodes[1], nodes[2], confidence="EXTRACTED")
+        communities[cid] = nodes
+        labels[cid] = f"Community {cid}"
+        cohesion[cid] = 1.0
+
+    report = generate(
+        G,
+        communities,
+        cohesion,
+        labels,
+        [],
+        [],
+        {"total_files": 25, "total_words": 100_000, "needs_graph": True, "warning": None},
+        {"input": 0, "output": 0},
+        "./project",
+        min_community_size=1,
+    )
+
+    hub_section = report.split("## God Nodes", 1)[0]
+    assert hub_section.count("[[_COMMUNITY_") == 20
+    assert "5 smaller communities" in hub_section
+    assert "[[_COMMUNITY_Community_0|src/domain_0]]" in hub_section
+    assert "`Thing 0.1`" in hub_section
+
+
+def test_report_summary_distinguishes_concept_communities_from_total_clusters():
+    G, communities, cohesion, labels, gods, surprises, detection, tokens = make_inputs()
+    report = generate(G, communities, cohesion, labels, gods, surprises, detection, tokens, "./project")
+    assert "concept communities" in report
+    assert "total clusters" in report

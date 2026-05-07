@@ -1,0 +1,54 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Graphify Dashboard</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <div class="shell">
+    <aside class="sidebar">
+      <div class="brand">Graphify</div>
+      <nav>
+        <button data-view="overview" class="active">Overview</button>
+        <button data-view="wiki">Wiki</button>
+        <button data-view="graph">Graph</button>
+        <button data-view="report">Report</button>
+      </nav>
+      <div id="status" class="status">Loading</div>
+    </aside>
+    <main>
+      <section id="overview" class="view active">
+        <div class="metrics">
+          <div><span id="node-count">0</span><label>Nodes</label></div>
+          <div><span id="link-count">0</span><label>Links</label></div>
+          <div><span id="wiki-count">0</span><label>Wiki Pages</label></div>
+        </div>
+        <div id="top-nodes" class="panel"></div>
+      </section>
+      <section id="wiki" class="view">
+        <div class="toolbar">
+          <input id="wiki-search" type="search" placeholder="Search wiki pages">
+          <span id="wiki-summary" class="summary"></span>
+        </div>
+        <div class="wiki-layout">
+          <div id="wiki-list" class="list"></div>
+          <article id="wiki-page" class="wiki-page"></article>
+        </div>
+      </section>
+      <section id="graph" class="view">
+        <div class="toolbar">
+          <input id="graph-search" type="search" placeholder="Search graph nodes">
+          <span id="graph-summary" class="summary"></span>
+        </div>
+        <div id="graph-list" class="list"></div>
+      </section>
+      <section id="report" class="view">
+        <article id="report-text" class="panel markdown"></article>
+      </section>
+    </main>
+  </div>
+  <script src="/app.js"></script>
+</body>
+</html>

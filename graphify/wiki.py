@@ -3,7 +3,10 @@
 from __future__ import annotations
 from collections import Counter
 from pathlib import Path
+from typing import Any
 import networkx as nx
+
+from graphify.report import display_community_labels
 
 
 def _safe_filename(name: str) -> str:
@@ -21,15 +24,23 @@ def _safe_filename(name: str) -> str:
     return s[:200] if s else 'unnamed'
 
 
-def _cross_community_links(G: nx.Graph, nodes: list[str], own_cid: int, labels: dict[int, str]) -> list[tuple[str, int]]:
-    """Return (community_label, edge_count) pairs for cross-community connections, sorted descending."""
-    counts: dict[str, int] = Counter()
+def _community_target(cid: Any) -> str:
+    return _safe_filename(f"_COMMUNITY_Community {cid}")
+
+
+def _wiki_link(target: str, label: str) -> str:
+    return f"[[{target}|{label}]]" if target != label else f"[[{target}]]"
+
+
+def _cross_community_links(G: nx.Graph, nodes: list[str], own_cid: int) -> list[tuple[Any, int]]:
+    """Return (community_id, edge_count) pairs for cross-community connections, sorted descending."""
+    counts: dict[Any, int] = Counter()
     for nid in nodes:
         for neighbor in G.neighbors(nid):
             nd = G.nodes[neighbor]
             ncid = nd.get("community")
             if ncid is not None and ncid != own_cid:
-                counts[labels.get(ncid, f"Community {ncid}")] += 1
+                counts[ncid] += 1
     return sorted(counts.items(), key=lambda x: -x[1])
 
 
@@ -39,10 +50,11 @@ def _community_article(
     nodes: list[str],
     label: str,
     labels: dict[int, str],
+    community_targets: dict[Any, str],
     cohesion: float | None,
 ) -> str:
     top_nodes = sorted(nodes, key=lambda n: G.degree(n), reverse=True)[:25]
-    cross = _cross_community_links(G, nodes, cid, labels)
+    cross = _cross_community_links(G, nodes, cid)
 
     # Edge confidence breakdown
     conf_counts: Counter = Counter()
@@ -77,8 +89,10 @@ def _community_article(
 
     lines += ["## Relationships", ""]
     if cross:
-        for other_label, count in cross[:12]:
-            lines.append(f"- [[{other_label}]] ({count} shared connections)")
+        for other_cid, count in cross[:12]:
+            other_label = labels.get(other_cid, f"Community {other_cid}")
+            target = community_targets.get(other_cid, _community_target(other_cid))
+            lines.append(f"- {_wiki_link(target, other_label)} ({count} shared connections)")
     else:
         lines.append("- No strong cross-community connections detected")
     lines.append("")
@@ -100,7 +114,13 @@ def _community_article(
     return "\n".join(lines)
 
 
-def _god_node_article(G: nx.Graph, nid: str, labels: dict[int, str]) -> str:
+def _god_node_article(
+    G: nx.Graph,
+    nid: str,
+    labels: dict[int, str],
+    community_targets: dict[Any, str],
+    god_targets: dict[str, str],
+) -> str:
     d = G.nodes[nid]
     node_label = d.get("label", nid)
     src = d.get("source_file", "")
@@ -112,7 +132,8 @@ def _god_node_article(G: nx.Graph, nid: str, labels: dict[int, str]) -> str:
     lines += [f"> God node · {G.degree(nid)} connections · `{src}`", ""]
 
     if community_name:
-        lines += [f"**Community:** [[{community_name}]]", ""]
+        target = community_targets.get(cid, _community_target(cid))
+        lines += [f"**Community:** {_wiki_link(target, community_name)}", ""]
 
     # Group neighbors by relation type
     by_relation: dict[str, list[str]] = {}
@@ -123,7 +144,11 @@ def _god_node_article(G: nx.Graph, nid: str, labels: dict[int, str]) -> str:
         neighbor_label = nd.get("label", neighbor)
         conf = ed.get("confidence", "")
         conf_str = f" `{conf}`" if conf else ""
-        by_relation.setdefault(rel, []).append(f"[[{neighbor_label}]]{conf_str}")
+        if neighbor in god_targets:
+            target = god_targets[neighbor]
+            by_relation.setdefault(rel, []).append(f"{_wiki_link(target, neighbor_label)}{conf_str}")
+        else:
+            by_relation.setdefault(rel, []).append(f"`{neighbor_label}`{conf_str}")
 
     lines += ["## Connections by Relation", ""]
     for rel, targets in sorted(by_relation.items()):
@@ -139,7 +164,9 @@ def _god_node_article(G: nx.Graph, nid: str, labels: dict[int, str]) -> str:
 def _index_md(
     communities: dict[int, list[str]],
     labels: dict[int, str],
+    community_targets: dict[Any, str],
     god_nodes_data: list[dict],
+    god_targets: dict[str, str],
     total_nodes: int,
     total_edges: int,
 ) -> str:
@@ -159,13 +186,16 @@ def _index_md(
 
     for cid, nodes in sorted(communities.items(), key=lambda x: -len(x[1])):
         label = labels.get(cid, f"Community {cid}")
-        lines.append(f"- [[{label}]] — {len(nodes)} nodes")
+        target = community_targets.get(cid, _community_target(cid))
+        lines.append(f"- {_wiki_link(target, label)} — {len(nodes)} nodes")
     lines.append("")
 
     if god_nodes_data:
         lines += ["## God Nodes", "(most connected concepts — the load-bearing abstractions)", ""]
         for node in god_nodes_data:
-            lines.append(f"- [[{node['label']}]] — {node['degree']} connections")
+            target = god_targets.get(node.get("id"))
+            if target:
+                lines.append(f"- {_wiki_link(target, node['label'])} — {node['degree']} connections")
         lines.append("")
 
     lines += [
@@ -188,8 +218,8 @@ def to_wiki(
 
     Writes:
       - index.md            — agent entry point, catalog of all articles
-      - <CommunityName>.md  — one article per community
-      - <GodNodeLabel>.md   — one article per god node
+      - _COMMUNITY_Community_<id>.md  — one article per community
+      - _GOD_<GodNodeLabel>.md        — one article per god node
 
     Returns the number of articles written (excluding index.md).
     """
@@ -205,12 +235,13 @@ def to_wiki(
     for old_article in out.glob("*.md"):
         old_article.unlink()
 
-    labels = community_labels or {cid: f"Community {cid}" for cid in communities}
+    raw_labels = community_labels or {cid: f"Community {cid}" for cid in communities}
+    labels = display_community_labels(G, communities, raw_labels)
     cohesion = cohesion or {}
     god_nodes_data = god_nodes_data or []
 
     count = 0
-    used_slugs: set[str] = set()
+    used_slugs: set[str] = {"index"}
 
     def _unique_slug(base: str) -> str:
         slug = base
@@ -221,26 +252,40 @@ def to_wiki(
         used_slugs.add(slug)
         return slug
 
+    community_targets = {cid: _unique_slug(_community_target(cid)) for cid in communities}
+    valid_god_nodes = [node_data for node_data in god_nodes_data if node_data.get("id") in G]
+    god_targets = {
+        node_data["id"]: _unique_slug(_safe_filename(f"_GOD_{node_data['label']}"))
+        for node_data in valid_god_nodes
+    }
+
     # Community articles
     for cid, nodes in communities.items():
         label = labels.get(cid, f"Community {cid}")
-        article = _community_article(G, cid, nodes, label, labels, cohesion.get(cid))
-        slug = _unique_slug(_safe_filename(label))
+        article = _community_article(G, cid, nodes, label, labels, community_targets, cohesion.get(cid))
+        slug = community_targets[cid]
         (out / f"{slug}.md").write_text(article, encoding="utf-8")
         count += 1
 
     # God node articles
-    for node_data in god_nodes_data:
-        nid = node_data.get("id")
-        if nid and nid in G:
-            article = _god_node_article(G, nid, labels)
-            slug = _unique_slug(_safe_filename(node_data['label']))
-            (out / f"{slug}.md").write_text(article, encoding="utf-8")
-            count += 1
+    for node_data in valid_god_nodes:
+        nid = node_data["id"]
+        article = _god_node_article(G, nid, labels, community_targets, god_targets)
+        slug = god_targets[nid]
+        (out / f"{slug}.md").write_text(article, encoding="utf-8")
+        count += 1
 
     # Index
     (out / "index.md").write_text(
-        _index_md(communities, labels, god_nodes_data, G.number_of_nodes(), G.number_of_edges()),
+        _index_md(
+            communities,
+            labels,
+            community_targets,
+            valid_god_nodes,
+            god_targets,
+            G.number_of_nodes(),
+            G.number_of_edges(),
+        ),
         encoding="utf-8",
     )
 

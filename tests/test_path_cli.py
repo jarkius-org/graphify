@@ -70,8 +70,8 @@ def test_path_first_wiki_generates_markdown_wiki(monkeypatch, tmp_path):
     out.mkdir()
 
     G = nx.Graph()
-    G.add_node("a", label="A", file_type="code", source_file="a.py")
-    G.add_node("b", label="B", file_type="code", source_file="b.py")
+    G.add_node("a", label="A", file_type="code", source_file="a.py", community=7)
+    G.add_node("b", label="B", file_type="code", source_file="b.py", community=9)
     G.add_edge("a", "b", relation="calls", confidence="EXTRACTED")
     (out / "graph.json").write_text(json.dumps(json_graph.node_link_data(G, edges="links")))
 
@@ -82,6 +82,8 @@ def test_path_first_wiki_generates_markdown_wiki(monkeypatch, tmp_path):
     mainmod.main()
 
     assert (out / "wiki" / "index.md").exists()
+    assert (out / "wiki" / "_COMMUNITY_Community_7.md").exists()
+    assert (out / "wiki" / "_COMMUNITY_Community_9.md").exists()
 
 
 def test_path_first_backend_code_only_skips_llm_without_api_key(monkeypatch, tmp_path):
@@ -167,6 +169,40 @@ def test_update_command_backend_routes_to_semantic_build(monkeypatch, tmp_path):
     mainmod.main()
 
     assert calls == [(tmp_path, "claude", True, True, True)]
+
+
+def test_dashboard_command_routes_to_web_server(monkeypatch, tmp_path):
+    calls = []
+
+    def fake_serve(path, *, host="127.0.0.1", port=8765, graph_dir=None, token=None):
+        calls.append((path, host, port, graph_dir, token))
+
+    monkeypatch.setattr(mainmod, "_check_skill_version", lambda _: None)
+    monkeypatch.setattr("graphify.web_server.serve_dashboard", fake_serve)
+    monkeypatch.setattr(
+        mainmod.sys,
+        "argv",
+        ["graphify", "dashboard", str(tmp_path), "--host", "0.0.0.0", "--port", "9000", "--graph-dir", str(tmp_path / "out")],
+    )
+
+    mainmod.main()
+
+    assert calls == [(tmp_path, "0.0.0.0", 9000, str(tmp_path / "out"), None)]
+
+
+def test_dashboard_command_accepts_fixed_token(monkeypatch, tmp_path):
+    calls = []
+
+    def fake_serve(path, *, host="127.0.0.1", port=8765, graph_dir=None, token=None):
+        calls.append((path, token))
+
+    monkeypatch.setattr(mainmod, "_check_skill_version", lambda _: None)
+    monkeypatch.setattr("graphify.web_server.serve_dashboard", fake_serve)
+    monkeypatch.setattr(mainmod.sys, "argv", ["graphify", "web", str(tmp_path), "--token", "dev-token"])
+
+    mainmod.main()
+
+    assert calls == [(tmp_path, "dev-token")]
 
 
 def test_path_first_backend_uses_semantic_cache_without_api_key(monkeypatch, tmp_path):

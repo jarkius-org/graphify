@@ -1,6 +1,8 @@
 venv/
 .venv/
 env/
+.env
+.DS_Store
 __pycache__/
 *.pyc
 *.egg-info/
@@ -17,6 +19,8 @@ graphify-out/
 .graphify_*.json
 .graphify_python
 .claude/
+.opencode/
+ψ/
 skills/
 docs/superpowers/
 .vscode/

@@ -13,13 +13,13 @@ main { padding: 24px; overflow: auto; }
 .toolbar { display: grid; grid-template-columns: minmax(180px, 380px) 1fr; gap: 12px; align-items: center; margin-bottom: 12px; }
 input { width: 100%; border: 1px solid #cbd5e1; border-radius: 6px; padding: 10px 12px; color: #18212f; background: #ffffff; font: inherit; }
 .summary { color: #6b7280; font-size: 13px; }
-.metrics { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 14px; margin-bottom: 18px; }
+.metrics { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 14px; margin-bottom: 18px; }
 .metrics div, .panel, .list, .wiki-page, pre { background: #ffffff; border: 1px solid #e5e7eb; border-radius: 8px; padding: 16px; }
 .metrics span { display: block; font-size: 32px; font-weight: 700; }
 .metrics label { color: #6b7280; font-size: 13px; }
 .list { display: grid; gap: 8px; margin-bottom: 16px; }
 .wiki-layout { display: grid; grid-template-columns: minmax(220px, 340px) minmax(0, 900px); gap: 16px; align-items: start; }
-#wiki-list { max-height: calc(100vh - 150px); overflow: auto; margin-bottom: 0; }
+#wiki-list, #project-wiki-list { max-height: calc(100vh - 150px); overflow: auto; margin-bottom: 0; }
 .item { padding: 10px 12px; border: 1px solid #e5e7eb; border-radius: 6px; background: #ffffff; cursor: pointer; }
 .item:hover, .item.active { border-color: #2563eb; }
 .item.active { background: #eff6ff; color: #1d4ed8; }

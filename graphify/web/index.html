@@ -13,6 +13,7 @@
       <nav>
         <button data-view="overview" class="active">Overview</button>
         <button data-view="wiki">Wiki</button>
+        <button data-view="project-wiki">Project Wiki</button>
         <button data-view="graph">Graph</button>
         <button data-view="report">Report</button>
       </nav>
@@ -24,6 +25,7 @@
           <div><span id="node-count">0</span><label>Nodes</label></div>
           <div><span id="link-count">0</span><label>Links</label></div>
           <div><span id="wiki-count">0</span><label>Wiki Pages</label></div>
+          <div><span id="project-wiki-count">0</span><label>Project Wiki</label></div>
         </div>
         <div id="top-nodes" class="panel"></div>
       </section>
@@ -35,6 +37,16 @@
         <div class="wiki-layout">
           <div id="wiki-list" class="list"></div>
           <article id="wiki-page" class="wiki-page"></article>
+        </div>
+      </section>
+      <section id="project-wiki" class="view">
+        <div class="toolbar">
+          <input id="project-wiki-search" type="search" placeholder="Search project wiki pages">
+          <span id="project-wiki-summary" class="summary"></span>
+        </div>
+        <div class="wiki-layout">
+          <div id="project-wiki-list" class="list"></div>
+          <article id="project-wiki-page" class="wiki-page"></article>
         </div>
       </section>
       <section id="graph" class="view">

@@ -8,6 +8,7 @@ const api = (path) => fetch(`${path}${path.includes('?') ? '&' : '?'}token=${enc
 const setText = (id, value) => { document.getElementById(id).textContent = value; };
 const normalize = (value) => String(value || '').toLowerCase().replace(/[^a-z0-9]+/g, ' ').trim();
 let wikiPages = [];
+let projectWikiPages = [];
 let graphNodes = [];
 
 document.querySelectorAll('nav button').forEach((button) => {
@@ -20,35 +21,78 @@ document.querySelectorAll('nav button').forEach((button) => {
 });
 
 async function selectWikiPage(page, selectedButton = null) {
-  document.querySelectorAll('#wiki-list .item').forEach((item) => item.classList.remove('active'));
+  await selectPage({
+    page,
+    selectedButton,
+    listId: 'wiki-list',
+    articleId: 'wiki-page',
+    apiPrefix: '/api/wiki',
+  });
+}
+
+async function selectProjectWikiPage(page, selectedButton = null) {
+  await selectPage({
+    page,
+    selectedButton,
+    listId: 'project-wiki-list',
+    articleId: 'project-wiki-page',
+    apiPrefix: '/api/project-wiki',
+  });
+}
+
+async function selectPage({ page, selectedButton = null, listId, articleId, apiPrefix }) {
+  document.querySelectorAll(`#${listId} .item`).forEach((item) => item.classList.remove('active'));
   if (selectedButton) selectedButton.classList.add('active');
-  const article = document.getElementById('wiki-page');
+  const article = document.getElementById(articleId);
   article.textContent = 'Loading...';
-  const detail = await api(`/api/wiki/${encodeURIComponent(page.name)}`);
+  const detail = await api(`${apiPrefix}/${encodeURIComponent(page.name)}`);
   article.innerHTML = detail.html;
 }
 
-function renderWikiList(pages) {
-  const list = document.getElementById('wiki-list');
+function renderPageList({ pages, allPages, listId, summaryId, emptyText, select }) {
+  const list = document.getElementById(listId);
   list.replaceChildren();
-  document.getElementById('wiki-summary').textContent = `${pages.length} of ${wikiPages.length} pages`;
+  document.getElementById(summaryId).textContent = `${pages.length} of ${allPages.length} pages`;
   for (const page of pages) {
     const item = document.createElement('button');
     item.className = 'item';
     item.textContent = page.title;
     item.title = page.name;
-    item.addEventListener('click', () => selectWikiPage(page, item).catch((error) => {
-      document.getElementById('wiki-page').textContent = error.message;
+    item.addEventListener('click', () => select(page, item).catch((error) => {
+      const articleId = listId.replace('-list', '-page');
+      document.getElementById(articleId).textContent = error.message;
     }));
     list.appendChild(item);
   }
   if (!pages.length) {
     const empty = document.createElement('div');
     empty.className = 'summary';
-    empty.textContent = 'No wiki pages match this search.';
+    empty.textContent = emptyText;
     list.appendChild(empty);
   }
   return list.querySelector('.item');
+}
+
+function renderWikiList(pages) {
+  return renderPageList({
+    pages,
+    allPages: wikiPages,
+    listId: 'wiki-list',
+    summaryId: 'wiki-summary',
+    emptyText: 'No wiki pages match this search.',
+    select: selectWikiPage,
+  });
+}
+
+function renderProjectWikiList(pages) {
+  return renderPageList({
+    pages,
+    allPages: projectWikiPages,
+    listId: 'project-wiki-list',
+    summaryId: 'project-wiki-summary',
+    emptyText: 'No project wiki pages match this search.',
+    select: selectProjectWikiPage,
+  });
 }
 
 async function loadWiki() {
@@ -59,6 +103,17 @@ async function loadWiki() {
   const indexPage = wikiPages.find((page) => page.name === 'index') || wikiPages[0];
   if (indexPage) {
     await selectWikiPage(indexPage, firstButton);
+  }
+}
+
+async function loadProjectWiki() {
+  const data = await api('/api/project-wiki');
+  projectWikiPages = data.pages;
+  setText('project-wiki-count', projectWikiPages.length);
+  const firstButton = renderProjectWikiList(projectWikiPages);
+  const indexPage = projectWikiPages.find((page) => page.name.endsWith('/index.md')) || projectWikiPages[0];
+  if (indexPage) {
+    await selectProjectWikiPage(indexPage, firstButton);
   }
 }
 
@@ -95,6 +150,7 @@ async function load() {
     topNodes.append(heading, summary);
 
     await loadWiki().catch(() => setText('wiki-count', 0));
+    await loadProjectWiki().catch(() => setText('project-wiki-count', 0));
     api('/api/graph').then((graph) => {
       graphNodes = graph.nodes || [];
       renderGraphList(graphNodes);
@@ -117,6 +173,32 @@ document.getElementById('wiki-search').addEventListener('input', (event) => {
       document.getElementById('wiki-page').textContent = error.message;
     });
   }
+});
+
+document.getElementById('project-wiki-search').addEventListener('input', (event) => {
+  const query = normalize(event.target.value);
+  const pages = query
+    ? projectWikiPages.filter((page) => normalize(`${page.title} ${page.name}`).includes(query))
+    : projectWikiPages;
+  const firstButton = renderProjectWikiList(pages);
+  if (pages[0]) {
+    selectProjectWikiPage(pages[0], firstButton).catch((error) => {
+      document.getElementById('project-wiki-page').textContent = error.message;
+    });
+  }
+});
+
+document.getElementById('project-wiki-page').addEventListener('click', (event) => {
+  if (!(event.target instanceof Element)) return;
+  const link = event.target.closest('a[href^="/project-wiki/"]');
+  if (!link) return;
+  event.preventDefault();
+  const url = new URL(link.href);
+  const name = decodeURIComponent(url.pathname.replace('/project-wiki/', ''));
+  const page = projectWikiPages.find((candidate) => candidate.name === name) || { name, title: name };
+  selectProjectWikiPage(page).catch((error) => {
+    document.getElementById('project-wiki-page').textContent = error.message;
+  });
 });
 
 document.getElementById('graph-search').addEventListener('input', (event) => {

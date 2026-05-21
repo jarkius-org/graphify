@@ -21,6 +21,21 @@ def write_graphify_out(project: Path) -> None:
     (wiki / "index.md").write_text("# Knowledge Graph Index\n\n- [[includes/jpgraph]]\n- [[Alpha]]", encoding="utf-8")
     (wiki / "Alpha.md").write_text("# Alpha\n\nAlpha details", encoding="utf-8")
     (wiki / "includes-jpgraph.md").write_text("# includes/jpgraph\n\nGraph library details", encoding="utf-8")
+    docs_wiki = project / "docs" / "wiki"
+    docs_strategy = project / "docs" / "strategy"
+    docs_wiki.mkdir(parents=True)
+    docs_strategy.mkdir(parents=True)
+    (project / ".llmwiki.json").write_text(json.dumps({
+        "wiki_dir": "docs/wiki",
+        "required_pages": ["index.md", "overview.md"],
+        "required_index_targets": ["docs/strategy/system-map.md"],
+    }), encoding="utf-8")
+    (docs_wiki / "index.md").write_text(
+        "# CIS Wiki Index\n\n- [System Map](../strategy/system-map.md)\n- [Overview](./overview.md)",
+        encoding="utf-8",
+    )
+    (docs_wiki / "overview.md").write_text("# CIS Wiki Overview\n\nProject-level AI summary.", encoding="utf-8")
+    (docs_strategy / "system-map.md").write_text("# CIS System Map\n\nProject strategy details.", encoding="utf-8")
 
 
 @pytest.fixture
@@ -77,6 +92,8 @@ def test_health_route_reports_available_outputs(running_dashboard):
     assert data["graph"]["links"] == 1
     assert data["report"]["exists"] is True
     assert data["wiki"]["exists"] is True
+    assert data["project_wiki"]["exists"] is True
+    assert data["project_wiki"]["pages"] == 3
 
 
 def test_report_route_returns_rendered_wiki_link_html(running_dashboard):
@@ -106,6 +123,30 @@ def test_wiki_page_rejects_path_traversal(running_dashboard):
     base_url, token = running_dashboard
     with pytest.raises(urllib.error.HTTPError) as exc:
         urllib.request.urlopen(f"{base_url}/api/wiki/../graph?token={token}", timeout=5)
+    assert exc.value.code in {400, 404}
+
+
+def test_project_wiki_index_and_page_routes_return_project_docs(running_dashboard):
+    base_url, token = running_dashboard
+    index = get_json(f"{base_url}/api/project-wiki?token={token}")
+    assert [page["name"] for page in index["pages"][:3]] == [
+        "docs/wiki/index.md",
+        "docs/wiki/overview.md",
+        "docs/strategy/system-map.md",
+    ]
+    assert index["pages"][0]["title"] == "CIS Wiki Index"
+
+    page = get_json(f"{base_url}/api/project-wiki/docs%2Fwiki%2Findex.md?token={token}")
+    assert page["name"] == "docs/wiki/index.md"
+    assert "<h1>CIS Wiki Index</h1>" in page["html"]
+    assert "System Map" in page["html"]
+    assert 'href="/project-wiki/docs%2Fstrategy%2Fsystem-map.md?token=' in page["html"]
+
+
+def test_project_wiki_rejects_path_traversal(running_dashboard):
+    base_url, token = running_dashboard
+    with pytest.raises(urllib.error.HTTPError) as exc:
+        urllib.request.urlopen(f"{base_url}/api/project-wiki/..%2Fpyproject.toml?token={token}", timeout=5)
     assert exc.value.code in {400, 404}
 
 

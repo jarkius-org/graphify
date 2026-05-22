@@ -1045,7 +1045,7 @@ def _clone_repo(url: str, branch: str | None = None, out_dir: Path | None = None
 _COMMANDS = {
     "install", "claude", "gemini", "cursor", "vscode", "copilot", "kiro", "pi",
     "aider", "codex", "opencode", "claw", "droid", "trae", "trae-cn", "hermes",
-    "antigravity", "hook", "query", "save-result", "path", "explain", "add",
+    "antigravity", "hook", "query", "save-result", "digest", "path", "explain", "add",
     "watch", "cluster-only", "update", "hook-check", "check-update", "tree",
     "merge-graphs", "clone", "benchmark", "layers", "tour", "diff", "dashboard", "web",
 }
@@ -1459,6 +1459,12 @@ def main() -> None:
         print("    --type T                query type: query|path_query|explain (default: query)")
         print("    --nodes N1 N2 ...       source node labels cited in the answer")
         print("    --memory-dir DIR        memory directory (default: graphify-out/memory)")
+        print("  digest [path]           export a graph/report digest to durable memory")
+        print("    --memory-dir DIR        output memory directory (default: graphify-out/memory)")
+        print("    --psi-outbox DIR        optional Psi/Arra outbox note directory")
+        print("    --project-slug SLUG     slug to use in the digest filename")
+        print("    --graph PATH            path to graph.json (default <path>/graphify-out/graph.json)")
+        print("    --report PATH           path to GRAPH_REPORT.md (default <path>/graphify-out/GRAPH_REPORT.md)")
         print("  check-update <path>     check needs_update flag and notify if semantic re-extraction is pending (cron-safe)")
         print("  tree                    emit a D3 v7 collapsible-tree HTML for graph.json")
         print("    --graph PATH            path to graph.json (default graphify-out/graph.json)")
@@ -1738,6 +1744,34 @@ def main() -> None:
             source_nodes=opts.nodes or None,
         )
         print(f"Saved to {out}")
+    elif cmd == "digest":
+        import argparse as _ap
+        p = _ap.ArgumentParser(prog="graphify digest")
+        p.add_argument("path", nargs="?", default=".")
+        p.add_argument("--memory-dir", default=None)
+        p.add_argument("--psi-outbox", default=None)
+        p.add_argument("--project-slug", default=None)
+        p.add_argument("--graph", default=None)
+        p.add_argument("--report", default=None)
+        opts = p.parse_args(sys.argv[2:])
+        project_path = Path(opts.path).resolve()
+        graph_path = Path(opts.graph).resolve() if opts.graph else project_path / _GRAPHIFY_OUT / "graph.json"
+        report_path = Path(opts.report).resolve() if opts.report else project_path / _GRAPHIFY_OUT / "GRAPH_REPORT.md"
+        memory_dir = Path(opts.memory_dir) if opts.memory_dir else project_path / _GRAPHIFY_OUT / "memory"
+        from graphify.digest import write_digest
+        try:
+            out = write_digest(
+                project_path=project_path,
+                graph_path=graph_path,
+                report_path=report_path,
+                memory_dir=memory_dir,
+                project_slug=opts.project_slug,
+                psi_outbox=Path(opts.psi_outbox) if opts.psi_outbox else None,
+            )
+        except FileNotFoundError as exc:
+            print(f"error: {exc}", file=sys.stderr)
+            sys.exit(1)
+        print(f"Digest written to {out}")
     elif cmd == "path":
         if len(sys.argv) < 4:
             print("Usage: graphify path \"<source>\" \"<target>\" [--graph path]", file=sys.stderr)

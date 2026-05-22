@@ -1,4 +1,5 @@
 """Tests for graphify install --platform routing."""
+import re
 from pathlib import Path
 from unittest.mock import patch
 import pytest
@@ -72,6 +73,26 @@ def test_codex_skill_contains_spawn_agent():
     import graphify
     skill = (Path(graphify.__file__).parent / "skill-codex.md").read_text()
     assert "spawn_agent" in skill
+    assert 'agent_type="executor"' in skill
+    assert 'agent_type="worker"' not in skill
+
+
+def test_codex_skill_uses_native_subagent_terms():
+    """Codex skill must not retain legacy Agent-tool recovery wording."""
+    import graphify
+    skill = (Path(graphify.__file__).parent / "skill-codex.md").read_text()
+    assert "subagent_type" not in skill
+    assert "general-purpose" not in skill
+    assert "wait_agent(handle)" not in skill
+    assert "Agent call" not in skill
+
+
+def test_codex_skill_keeps_temp_files_in_graphify_out():
+    """Codex skill temp files should live under graphify-out."""
+    import graphify
+    skill = (Path(graphify.__file__).parent / "skill-codex.md").read_text()
+    assert "mkdir -p graphify-out" in skill
+    assert not re.search(r"(?<!graphify-out/)\.graphify_", skill)
 
 
 def test_opencode_skill_contains_mention():

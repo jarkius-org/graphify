@@ -1,0 +1,30 @@
+{
+  "wiki_dir": "docs/wiki",
+  "source_dirs": [
+    "docs",
+    "graphify"
+  ],
+  "required_pages": [
+    "README.md",
+    "index.md",
+    "overview.md",
+    "glossary.md",
+    "log.md"
+  ],
+  "required_index_targets": [
+    "docs/wiki/context-layers.md"
+  ],
+  "required_text": [
+    "docs/wiki is curated project truth",
+    "graphify-out/wiki is generated graph navigation"
+  ],
+  "ignore": [
+    ".git",
+    ".llmwiki",
+    ".venv",
+    "__pycache__",
+    "graphify-out/cache",
+    "node_modules",
+    "vendor"
+  ]
+}

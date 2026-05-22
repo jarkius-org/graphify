@@ -163,6 +163,7 @@ graphify . --cluster-only          # rerun clustering without re-extracting
 graphify . --no-viz                # skip HTML outputs, just the report + JSON
 graphify . --wiki                  # build a markdown wiki from the graph
 graphify dashboard .               # serve graphify-out as a tokenized live dashboard
+graphify digest . --memory-dir ~/.oracle-vault/psi/memory/projects/graphify/
 
 graphify query "what connects auth to the database?"
 graphify path "UserService" "DatabasePool"
@@ -200,6 +201,27 @@ graphify update . --backend claude
 Use assistant-mediated `/graphify` when you want your coding assistant to dispatch its own semantic extraction workers. Use `--backend kimi|claude` when you want the terminal CLI to call the provider directly. Graphify validates and normalizes semantic output before merging it into `graph.json`.
 
 If `--backend kimi` reports that the `openai` package is missing, install `graphifyy[kimi]` or `graphifyy[llm]` into the same Python environment that runs `graphify`. If Moonshot returns `429 exceeded_current_quota_error`, the API key is valid enough to reach billing, but the Moonshot account needs credit/top-up before semantic extraction can run.
+
+### Project wiki and durable memory
+
+Graphify keeps context layers separate:
+
+- `docs/wiki/` is curated project truth for humans and agents.
+- `graphify-out/wiki/` is generated graph navigation from `graphify --wiki`.
+- `.llmwiki/` is a rebuildable local cache created by `core-llmwiki`.
+- `~/.oracle-vault/` is durable cross-session memory for digests, retrospectives, and lessons.
+- Arra/Psi can index promoted memory, but markdown remains the canonical copy.
+
+For projects with a `docs/wiki` contract, run:
+
+```bash
+core-llmwiki lint --project .
+core-llmwiki index --project .
+graphify . --backend kimi --wiki
+graphify digest . --memory-dir ~/.oracle-vault/psi/memory/projects/graphify/
+```
+
+Use `--psi-outbox <dir>` with `graphify digest` when you want to leave an optional Arra/Psi indexing note. The digest file is still the source of truth.
 
 ---
 
